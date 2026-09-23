@@ -1,0 +1,93 @@
+# ========================
+# Python / Backend
+# ========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+.eggs/
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Environment variables
+*.env
+.env.*
+!.env.example
+
+# Alembic
+# (keep alembic.ini and migrations tracked)
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+mushroom_farm.db
+app.db
+test.db
+
+# ========================
+# Node / Frontend
+# ========================
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# Build output
+client/dist/
+client/build/
+
+# Vite
+client/.vite/
+
+# ========================
+# OS / Editor
+# ========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ========================
+# Logs & temp files
+# ========================
+*.log
+logs/
+tmp/
+temp/
+
+# ========================
+# Docker
+# ========================
+*.env.docker
+
+# ========================
+# Misc
+# ========================
+*.bak
+*.orig
+coverage/
+.nyc_output/
+tmp_*/

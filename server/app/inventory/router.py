@@ -1,0 +1,30 @@
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app import models
+from app.auth import require_admin
+from app.core.database import get_db
+from app.inventory.schemas import InventoryAdjustment, InventoryResponse
+
+router = APIRouter(prefix="/api/v1/admin/inventory", tags=["Inventory"])
+
+
+@router.post("/adjustments", response_model=InventoryResponse)
+def adjust_inventory(body: InventoryAdjustment, db: Session = Depends(get_db), current_user: models.User = Depends(require_admin)):
+    inventory = db.query(models.Inventory).filter(models.Inventory.product_id == body.product_id).with_for_update().first()
+    if not inventory:
+        raise HTTPException(status_code=404, detail="Inventory record not found")
+    next_quantity = inventory.quantity + body.quantity_delta
+    if next_quantity < 0:
+        raise HTTPException(status_code=409, detail="Inventory cannot become negative")
+    inventory.quantity = next_quantity
+    db.add(models.InventoryMovement(product_id=body.product_id, quantity_delta=body.quantity_delta, reason=body.reason, created_by=current_user.id))
+    db.commit()
+    db.refresh(inventory)
+    return {"product_id": inventory.product_id, "quantity": inventory.quantity, "low_stock_threshold": inventory.low_stock_threshold}
+
+
+@router.get("/low-stock", response_model=list[InventoryResponse])
+def low_stock(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    rows = db.query(models.Inventory).filter(models.Inventory.quantity <= models.Inventory.low_stock_threshold).all()
+    return [{"product_id": row.product_id, "quantity": row.quantity, "low_stock_threshold": row.low_stock_threshold} for row in rows]
