@@ -25,6 +25,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     payload = data.copy()
+    payload["iat"] = datetime.now(timezone.utc)
     payload["exp"] = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
@@ -37,15 +38,20 @@ def get_current_user(
 ) -> models.User:
     error = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
+        detail="Could not validate credentials.",
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
         payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=[settings.algorithm])
-        username = payload.get("sub")
-    except JWTError as exc:
+        user_id = int(payload.get("sub"))
+    except (JWTError, TypeError, ValueError) as exc:
         raise error from exc
-    user = db.query(models.User).filter(models.User.username == username, models.User.is_active.is_(True)).first()
+
+    user = (
+        db.query(models.User)
+        .filter(models.User.id == user_id, models.User.is_active.is_(True))
+        .first()
+    )
     if user is None:
         raise error
     return user
@@ -54,7 +60,7 @@ def get_current_user(
 def require_role(*roles: models.UserRole):
     def check(current_user: models.User = Depends(get_current_user)) -> models.User:
         if current_user.role not in roles:
-            raise HTTPException(status_code=403, detail="Insufficient permissions")
+            raise HTTPException(status_code=403, detail="Insufficient permissions.")
         return current_user
 
     return check
