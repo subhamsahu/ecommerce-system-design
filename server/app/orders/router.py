@@ -81,96 +81,97 @@ def checkout(
     request_hash = _request_hash(body)
 
     try:
-        with db.begin():
-            existing = _existing_idempotent_order(
-                db,
-                user_id=current_user.id,
-                idempotency_key=idempotency_key,
-                request_hash=request_hash,
+        existing = _existing_idempotent_order(
+            db,
+            user_id=current_user.id,
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+        )
+        if existing:
+            return _response(existing)
+
+        cart = (
+            db.query(models.Cart)
+            .options(
+                joinedload(models.Cart.items)
+                .joinedload(models.CartItem.product)
+                .joinedload(models.Product.inventory)
             )
-            if existing:
-                result = _response(existing)
-            else:
-                cart = (
-                    db.query(models.Cart)
-                    .options(
-                        joinedload(models.Cart.items)
-                        .joinedload(models.CartItem.product)
-                        .joinedload(models.Product.inventory)
-                    )
-                    .filter(models.Cart.user_id == current_user.id)
-                    .first()
+            .filter(models.Cart.user_id == current_user.id)
+            .first()
+        )
+        if cart is None or not cart.items:
+            raise HTTPException(status_code=422, detail="Cart is empty.")
+
+        address = models.Address(user_id=current_user.id, **body.address.model_dump())
+        db.add(address)
+        db.flush()
+
+        order = models.Order(
+            user_id=current_user.id,
+            address_id=address.id,
+            idempotency_key=idempotency_key,
+            idempotency_request_hash=request_hash,
+            total=Decimal("0.00"),
+            currency="INR",
+        )
+        db.add(order)
+        db.flush()
+
+        total = Decimal("0.00")
+        for cart_item in list(cart.items):
+            inventory = (
+                db.query(models.Inventory)
+                .filter(models.Inventory.product_id == cart_item.product_id)
+                .with_for_update()
+                .first()
+            )
+            product = db.get(models.Product, cart_item.product_id)
+            if (
+                product is None
+                or not product.is_published
+                or product.is_archived
+                or inventory is None
+                or inventory.quantity < cart_item.quantity
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Insufficient inventory for {product.name if product else 'product'}.",
                 )
-                if cart is None or not cart.items:
-                    raise HTTPException(status_code=422, detail="Cart is empty.")
 
-                address = models.Address(user_id=current_user.id, **body.address.model_dump())
-                db.add(address)
-                db.flush()
-
-                order = models.Order(
-                    user_id=current_user.id,
-                    address_id=address.id,
-                    idempotency_key=idempotency_key,
-                    idempotency_request_hash=request_hash,
-                    total=Decimal("0.00"),
-                    currency="INR",
+            total += product.price * cart_item.quantity
+            inventory.quantity -= cart_item.quantity
+            db.add(
+                models.InventoryMovement(
+                    product_id=product.id,
+                    quantity_delta=-cart_item.quantity,
+                    reason="Order checkout",
+                    reference_type="order",
+                    reference_id=str(order.id),
+                    created_by=current_user.id,
                 )
-                db.add(order)
-                db.flush()
-
-                total = Decimal("0.00")
-                for cart_item in list(cart.items):
-                    inventory = (
-                        db.query(models.Inventory)
-                        .filter(models.Inventory.product_id == cart_item.product_id)
-                        .with_for_update()
-                        .first()
-                    )
-                    product = db.get(models.Product, cart_item.product_id)
-                    if (
-                        product is None
-                        or not product.is_published
-                        or product.is_archived
-                        or inventory is None
-                        or inventory.quantity < cart_item.quantity
-                    ):
-                        raise HTTPException(
-                            status_code=409,
-                            detail=f"Insufficient inventory for {product.name if product else 'product'}.",
-                        )
-
-                    total += product.price * cart_item.quantity
-                    inventory.quantity -= cart_item.quantity
-                    db.add(
-                        models.InventoryMovement(
-                            product_id=product.id,
-                            quantity_delta=-cart_item.quantity,
-                            reason="Order checkout",
-                            reference_type="order",
-                            reference_id=str(order.id),
-                            created_by=current_user.id,
-                        )
-                    )
-                    order.items.append(
-                        models.OrderItem(
-                            product_id=product.id,
-                            product_name=product.name,
-                            sku=product.sku,
-                            quantity=cart_item.quantity,
-                            unit_price=product.price,
-                        )
-                    )
-                    db.delete(cart_item)
-
-                order.total = total
-                order.history.append(
-                    models.OrderStatusHistory(
-                        to_status=models.OrderStatus.pending_payment.value,
-                        changed_by=current_user.id,
-                    )
+            )
+            order.items.append(
+                models.OrderItem(
+                    product_id=product.id,
+                    product_name=product.name,
+                    sku=product.sku,
+                    quantity=cart_item.quantity,
+                    unit_price=product.price,
                 )
-                result = _response(order)
+            )
+            db.delete(cart_item)
+
+        order.total = total
+        order.history.append(
+            models.OrderStatusHistory(
+                to_status=models.OrderStatus.pending_payment.value,
+                changed_by=current_user.id,
+            )
+        )
+        result = _response(order)
+        db.commit()
+        return result
     except IntegrityError:
         db.rollback()
         existing = _existing_idempotent_order(
@@ -182,8 +183,9 @@ def checkout(
         if existing:
             return _response(existing)
         raise
-
-    return result
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.get("", response_model=list[OrderResponse])
@@ -207,7 +209,7 @@ def get_order(order_id: int, db: Session = Depends(get_db), current_user: models
 
 @router.post("/{order_id}/cancellation", response_model=OrderResponse)
 def cancel_order(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    with db.begin():
+    try:
         order = (
             db.query(models.Order)
             .filter(models.Order.id == order_id, models.Order.user_id == current_user.id)
@@ -261,7 +263,11 @@ def cancel_order(order_id: int, db: Session = Depends(get_db), current_user: mod
             )
         )
         result = _response(order)
-    return result
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
 
 
 @router.patch("/{order_id}/status", response_model=OrderResponse)
@@ -271,7 +277,7 @@ def update_order_status(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
-    with db.begin():
+    try:
         order = db.query(models.Order).filter(models.Order.id == order_id).with_for_update().first()
         if not order:
             raise HTTPException(status_code=404, detail="Order not found.")
@@ -292,4 +298,8 @@ def update_order_status(
             )
         )
         result = _response(order)
-    return result
+        db.commit()
+        return result
+    except Exception:
+        db.rollback()
+        raise
