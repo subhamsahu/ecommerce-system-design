@@ -18,6 +18,7 @@ import type {
   UserResponse,
   RolePermissionsMap,
   PermissionSet,
+  OrderPage,
 } from "@/types";
 
 const api = axios.create({
@@ -69,6 +70,8 @@ export const listUsers = async (): Promise<UserResponse[]> => {
 
 export const createUser = async (payload: {
   username: string;
+  email: string;
+  full_name: string;
   password: string;
   role: string;
 }): Promise<UserResponse> => {
@@ -78,7 +81,7 @@ export const createUser = async (payload: {
 
 export const updateUser = async (
   id: number,
-  payload: { role?: string; password?: string },
+  payload: { role?: string; password?: string; is_active?: boolean },
 ): Promise<UserResponse> => {
   const { data } = await api.patch<UserResponse>(
     `/api/v1/users/${id}`,
@@ -87,8 +90,8 @@ export const updateUser = async (
   return data;
 };
 
-export const deleteUser = async (id: number): Promise<void> => {
-  await api.delete(`/api/v1/users/${id}`);
+export const deactivateUser = async (id: number): Promise<UserResponse> => {
+  return updateUser(id, { is_active: false });
 };
 
 /* -------------------- Role Permissions -------------------- */
@@ -113,6 +116,11 @@ export const listCategories = async (): Promise<Category[]> => {
   return data;
 };
 
+export const listAdminCategories = async (): Promise<Category[]> => {
+  const { data } = await api.get<Category[]>("/api/v1/admin/categories");
+  return data;
+};
+
 export const createCategory = async (payload: {
   name: string;
   description?: string;
@@ -124,9 +132,15 @@ export const createCategory = async (payload: {
   return data;
 };
 
-export const listAdminProducts = async (): Promise<Product[]> => {
-  const { data } = await api.get<Product[]>("/api/v1/admin/products");
-  return data;
+export const listAdminProducts = async (
+  params: { page?: number; page_size?: number } = {},
+): Promise<ProductPage> => {
+  const { data } = await api.get<ProductPage | Product[]>("/api/v1/admin/products", {
+    params: { page: 1, page_size: 20, ...params },
+  });
+  return Array.isArray(data)
+    ? { items: data, pagination: { page: 1, page_size: data.length, total_items: data.length, total_pages: 1 } }
+    : data;
 };
 
 export const createProduct = async (
@@ -166,9 +180,15 @@ export const adjustInventory = async (payload: {
   return data;
 };
 
-export const listOrders = async (): Promise<Order[]> => {
-  const { data } = await api.get<Order[]>("/api/v1/orders");
-  return data;
+export const listOrders = async (
+  params: { page?: number; page_size?: number; status?: string } = {},
+): Promise<OrderPage> => {
+  const { data } = await api.get<OrderPage | Order[]>("/api/v1/orders", {
+    params: { page: 1, page_size: 20, ...params },
+  });
+  return Array.isArray(data)
+    ? { items: data, pagination: { page: 1, page_size: data.length, total_items: data.length, total_pages: 1 } }
+    : data;
 };
 
 export const updateOrderStatus = async (
@@ -181,8 +201,13 @@ export const updateOrderStatus = async (
   return data;
 };
 
+export const cancelOrder = async (id: number): Promise<Order> => {
+  const { data } = await api.post<Order>(`/api/v1/orders/${id}/cancellation`);
+  return data;
+};
+
 export const listProducts = async (
-  params: { search?: string; category_id?: number; page_size?: number } = {},
+  params: { search?: string; category_id?: number; page?: number; page_size?: number } = {},
 ): Promise<ProductPage> => {
   const { data } = await api.get<ProductPage>("/api/v1/products", { params });
   return data;
@@ -206,11 +231,9 @@ export const addCartItem = async (
 
 export const updateCartItem = async (
   item_id: number,
-  product_id: number,
   quantity: number,
 ): Promise<Cart> => {
   const { data } = await api.patch<Cart>(`/api/v1/cart/items/${item_id}`, {
-    product_id,
     quantity,
   });
   return data;

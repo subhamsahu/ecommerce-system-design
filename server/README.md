@@ -29,6 +29,9 @@ python manage.py migrate
 # Seed initial data (role permissions)
 python manage.py seed
 
+# Create repeatable fake customers, products, inventory, and carts
+python manage.py seed_fake --count 1000
+
 # Create admin user (interactive)
 python manage.py createsuperuser
 

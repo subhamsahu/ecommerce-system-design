@@ -1,8 +1,13 @@
-import os
-from fastapi import FastAPI
+import logging
+import re
+from uuid import uuid4
+
+from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.database import Base, engine  # noqa: F401 - kept for Alembic metadata access
-from app import models  # noqa: F401 - registers all ORM models with Base.metadata
+from starlette.requests import Request
+
 from app.auth.router import router as auth_router
 from app.cart.router import router as cart_router
 from app.inventory.router import router as inventory_router
@@ -11,12 +16,11 @@ from app.payments.router import router as payments_router
 from app.products.router import router as products_router
 from app.users.router import router as users_router
 from app.auth.permissions import router as permissions_router
+from app.core.config import get_settings
 
-# Auto-create tables for SQLite (local dev) only.
-# On PostgreSQL (production/Render), Alembic migrations manage the schema.
-from app.core.config import get_settings as _get_settings
-if _get_settings().database_url.startswith("sqlite"):
-    Base.metadata.create_all(bind=engine)
+settings = get_settings()
+logger = logging.getLogger(__name__)
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 app = FastAPI(
     title="E-commerce System Design Laboratory API",
@@ -26,16 +30,67 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Phase 0 domain routers
+
+@app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    supplied_id = request.headers.get("X-Request-ID", "")
+    request_id = supplied_id if REQUEST_ID_PATTERN.fullmatch(supplied_id) else uuid4().hex
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+def _problem(request: Request, status: int, title: str, detail: str, code: str, errors: list[dict] | None = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=status,
+        content={
+            "type": f"https://example.local/problems/{code.lower().replace('_', '-')}",
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "instance": request.url.path,
+            "code": code,
+            "request_id": getattr(request.state, "request_id", None),
+            "errors": errors or [],
+        },
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = [
+        {"field": ".".join(str(part) for part in error["loc"] if part != "body"), "message": error["msg"]}
+        for error in exc.errors()
+    ]
+    return _problem(request, 422, "Validation failed", "One or more fields are invalid.", "VALIDATION_ERROR", errors)
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    titles = {401: "Authentication required", 403: "Forbidden", 404: "Not found", 409: "Conflict", 422: "Validation failed"}
+    codes = {401: "UNAUTHENTICATED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT", 422: "VALIDATION_ERROR"}
+    detail = exc.detail if isinstance(exc.detail, str) else "The request could not be completed."
+    response = _problem(request, exc.status_code, titles.get(exc.status_code, "Request failed"), detail, codes.get(exc.status_code, "REQUEST_ERROR"))
+    if exc.headers:
+        response.headers.update(exc.headers)
+    return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception("Unhandled API error; request_id=%s", getattr(request.state, "request_id", None))
+    return _problem(request, 500, "Internal server error", "An unexpected error occurred.", "INTERNAL_ERROR")
+
+# Phase 0 domain routers. All database schema changes are applied with Alembic.
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(products_router)

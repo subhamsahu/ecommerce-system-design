@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const errorMessage = (error: unknown) =>
   (error as { response?: { data?: { detail?: string } } })?.response?.data
@@ -29,26 +30,35 @@ export default function InventoryManagement() {
   const [reason, setReason] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState({ total_items: 0, total_pages: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [productData, lowStockData] = await Promise.all([
-        listAdminProducts(),
+      const [productPage, lowStockData] = await Promise.all([
+        listAdminProducts({ page, page_size: pageSize }),
         listLowStock(),
       ]);
-      setProducts(productData);
+      setProducts(productPage.items);
+      setPagination(productPage.pagination);
       setLowStock(lowStockData);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
   useEffect(() => {
     load();
   }, [load]);
+
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const openAdjustment = (product: Product) => {
     setSelected(product);
@@ -200,6 +210,14 @@ export default function InventoryManagement() {
             </tbody>
           </table>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          totalItems={pagination.total_items}
+          totalPages={pagination.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={changePageSize}
+        />
       </div>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-sm">

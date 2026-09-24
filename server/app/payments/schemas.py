@@ -1,5 +1,7 @@
 from decimal import Decimal
-from pydantic import BaseModel
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict
 
 
 class PaymentResponse(BaseModel):
@@ -10,4 +12,6 @@ class PaymentResponse(BaseModel):
 
 
 class PaymentOutcome(BaseModel):
-    outcome: str = "success"
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["success", "failure", "timeout"] = "success"

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import get_current_user
-from app.cart.schemas import CartItemInput, CartResponse
+from app.cart.schemas import CartItemInput, CartItemUpdate, CartResponse
 from app.core.database import get_db
 
 router = APIRouter(prefix="/api/v1/cart", tags=["Cart"])
@@ -41,22 +41,27 @@ def add_item(body: CartItemInput, db: Session = Depends(get_db), current_user: m
     product = db.query(models.Product).options(joinedload(models.Product.inventory)).filter(models.Product.id == body.product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False)).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
-    if not product.inventory or product.inventory.quantity < body.quantity:
+    if not product.inventory:
         raise HTTPException(status_code=409, detail="Insufficient inventory")
     cart = _get_cart(db, current_user.id)
     item = next((row for row in cart.items if row.product_id == body.product_id), None)
     if item:
-        if item.quantity + body.quantity > 100:
+        requested_quantity = item.quantity + body.quantity
+        if requested_quantity > 100:
             raise HTTPException(status_code=422, detail="Cart item limit is 100")
-        item.quantity += body.quantity
+        if product.inventory.quantity < requested_quantity:
+            raise HTTPException(status_code=409, detail="Insufficient inventory")
+        item.quantity = requested_quantity
     else:
+        if product.inventory.quantity < body.quantity:
+            raise HTTPException(status_code=409, detail="Insufficient inventory")
         cart.items.append(models.CartItem(product_id=body.product_id, quantity=body.quantity))
     db.commit()
     return _response(_get_cart(db, current_user.id))
 
 
 @router.patch("/items/{item_id}", response_model=CartResponse)
-def update_item(item_id: int, body: CartItemInput, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+def update_item(item_id: int, body: CartItemUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
@@ -73,7 +78,6 @@ def remove_item(item_id: int, db: Session = Depends(get_db), current_user: model
     item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
-    cart_id = item.cart_id
     db.delete(item)
     db.commit()
     return _response(_get_cart(db, current_user.id))

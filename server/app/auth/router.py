@@ -12,10 +12,10 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
     username = user_in.username.strip().lower()
-    email = user_in.email.strip().lower() if user_in.email else None
+    email = user_in.email.strip().lower()
     if db.query(models.User).filter(models.User.username == username).first():
         raise HTTPException(status_code=409, detail="Username already registered")
-    if email and db.query(models.User).filter(models.User.email == email).first():
+    if db.query(models.User).filter(models.User.email == email).first():
         raise HTTPException(status_code=409, detail="Email already registered")
     user = models.User(
         username=username,

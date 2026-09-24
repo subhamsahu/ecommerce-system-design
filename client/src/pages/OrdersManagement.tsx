@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronDown, ClipboardList, Eye } from "lucide-react";
-import { listOrders, updateOrderStatus } from "@/api/client";
+import { cancelOrder, listOrders, updateOrderStatus } from "@/api/client";
 import type { Order } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -12,8 +12,18 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
-const statuses = [
+const permittedTransitions: Record<string, string[]> = {
+  pending_payment: ["cancelled"],
+  paid: ["processing", "cancelled"],
+  processing: ["shipped", "cancelled"],
+  shipped: ["delivered"],
+  delivered: [],
+  cancelled: [],
+  refunded: [],
+};
+const allStatuses = [
   "pending_payment",
   "paid",
   "processing",
@@ -36,27 +46,40 @@ export default function OrdersManagement() {
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Order | null>(null);
   const [savingId, setSavingId] = useState<number | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState({ total_items: 0, total_pages: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setOrders(await listOrders());
+      const result = await listOrders({ page, page_size: pageSize });
+      setOrders(result.items);
+      setPagination(result.pagination);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
   useEffect(() => {
     load();
   }, [load]);
+
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const changeStatus = async (order: Order, status: string) => {
     if (status === order.status) return;
     setSavingId(order.id);
     try {
-      const updated = await updateOrderStatus(order.id, status);
+      const updated =
+        status === "cancelled"
+          ? await cancelOrder(order.id)
+          : await updateOrderStatus(order.id, status);
       setOrders((current) =>
         current.map((item) => (item.id === order.id ? updated : item)),
       );
@@ -164,16 +187,18 @@ export default function OrdersManagement() {
                         }
                         className="h-8 w-full appearance-none rounded-md border border-input bg-background px-2 pr-7 text-xs"
                       >
-                        <option value={order.status}>
-                          {label(order.status)}
-                        </option>
-                        {statuses
-                          .filter((status) => status !== order.status)
-                          .map((status) => (
-                            <option key={status} value={status}>
-                              {label(status)}
-                            </option>
-                          ))}
+                        {allStatuses.map((status) => (
+                          <option
+                            key={status}
+                            value={status}
+                            disabled={
+                              status !== order.status &&
+                              !(permittedTransitions[order.status] ?? []).includes(status)
+                            }
+                          >
+                            {label(status)}
+                          </option>
+                        ))}
                       </select>
                       <ChevronDown className="pointer-events-none absolute right-2 top-2 h-4 w-4 text-muted-foreground" />
                     </div>
@@ -189,6 +214,19 @@ export default function OrdersManagement() {
                       >
                         <Eye className="h-3.5 w-3.5" />
                       </Button>
+                      {(["pending_payment", "paid", "processing"] as string[]).includes(
+                        order.status,
+                      ) && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-destructive hover:text-destructive"
+                          disabled={savingId === order.id}
+                          onClick={() => changeStatus(order, "cancelled")}
+                        >
+                          Cancel
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -196,6 +234,14 @@ export default function OrdersManagement() {
             </tbody>
           </table>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          totalItems={pagination.total_items}
+          totalPages={pagination.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={changePageSize}
+        />
       </div>
       <Dialog
         open={!!selected}

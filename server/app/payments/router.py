@@ -1,38 +1,27 @@
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, Response, status
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth import get_current_user, require_admin
+from app.auth import get_current_user
 from app.core.database import get_db
 from app.payments.schemas import PaymentOutcome, PaymentResponse
+from app.payments.service import attempt_payment
 
 router = APIRouter(prefix="/api/v1/payments", tags=["Payments"])
 
 
-@router.post("/{order_id}/attempt", response_model=PaymentResponse)
-def attempt_payment(
+@router.post("/{order_id}/attempt", response_model=PaymentResponse, status_code=status.HTTP_201_CREATED)
+def create_payment_attempt(
     order_id: int,
     body: PaymentOutcome,
-    idempotency_key: str = Header(..., alias="Idempotency-Key"),
+    response: Response,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    order = db.query(models.Order).filter(models.Order.id == order_id, models.Order.user_id == current_user.id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    existing = db.query(models.Payment).filter(models.Payment.order_id == order_id, models.Payment.idempotency_key == idempotency_key).first()
-    if existing:
-        return existing
-    status_map = {"success": models.PaymentStatus.succeeded, "failure": models.PaymentStatus.failed, "timeout": models.PaymentStatus.timed_out}
-    payment_status = status_map.get(body.outcome)
-    if not payment_status:
-        raise HTTPException(status_code=422, detail="Outcome must be success, failure, or timeout")
-    payment = models.Payment(order_id=order_id, amount=order.total, status=payment_status, idempotency_key=idempotency_key)
-    db.add(payment)
-    if payment_status == models.PaymentStatus.succeeded:
-        order.status = models.OrderStatus.paid
-    db.commit()
-    db.refresh(payment)
+    payment, created = attempt_payment(db, order_id, current_user, body.outcome, idempotency_key)
+    if not created:
+        response.status_code = status.HTTP_200_OK
     return payment
 
 

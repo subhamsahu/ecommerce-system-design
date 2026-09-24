@@ -82,6 +82,7 @@ temp/
 # Docker
 # ========================
 *.env.docker
+volumes/postgres_data/
 
 # ========================
 # Misc

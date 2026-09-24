@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import models
 from app.auth import require_admin
 from app.core.database import get_db
-from app.inventory.schemas import InventoryAdjustment, InventoryResponse
+from app.core.schemas import Page
+from app.inventory.schemas import InventoryAdjustment, InventoryMovementResponse, InventoryResponse
 
 router = APIRouter(prefix="/api/v1/admin/inventory", tags=["Inventory"])
 
@@ -28,3 +29,22 @@ def adjust_inventory(body: InventoryAdjustment, db: Session = Depends(get_db), c
 def low_stock(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
     rows = db.query(models.Inventory).filter(models.Inventory.quantity <= models.Inventory.low_stock_threshold).all()
     return [{"product_id": row.product_id, "quantity": row.quantity, "low_stock_threshold": row.low_stock_threshold} for row in rows]
+
+
+@router.get("/movements", response_model=Page[InventoryMovementResponse])
+def list_movements(
+    product_id: int | None = Query(default=None, ge=1),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: models.User = Depends(require_admin),
+):
+    query = db.query(models.InventoryMovement)
+    if product_id is not None:
+        query = query.filter(models.InventoryMovement.product_id == product_id)
+    total = query.count()
+    rows = query.order_by(models.InventoryMovement.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": rows,
+        "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
+    }

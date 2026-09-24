@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { FolderTree, Plus } from "lucide-react";
-import { createCategory, listCategories } from "@/api/client";
+import { createCategory, listAdminCategories } from "@/api/client";
 import type { Category } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const errorMessage = (error: unknown) =>
   (error as { response?: { data?: { detail?: string } } })?.response?.data
@@ -28,12 +29,14 @@ export default function CategoryManagement() {
   const [description, setDescription] = useState("");
   const [formError, setFormError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      setCategories(await listCategories());
+      setCategories(await listAdminCategories());
     } catch (err) {
       setError(errorMessage(err));
     } finally {
@@ -44,6 +47,13 @@ export default function CategoryManagement() {
   useEffect(() => {
     load();
   }, [load]);
+
+  const totalPages = Math.max(1, Math.ceil(categories.length / pageSize));
+  const visibleCategories = categories.slice((page - 1) * pageSize, page * pageSize);
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const openCreate = () => {
     setName("");
@@ -154,7 +164,7 @@ export default function CategoryManagement() {
               </tr>
             </thead>
             <tbody>
-              {categories.map((category, index) => (
+              {visibleCategories.map((category, index) => (
                 <tr
                   key={category.id}
                   className={`border-t ${index % 2 === 0 ? "bg-[#efefef]/60 dark:bg-muted/30" : "bg-background"}`}
@@ -182,6 +192,14 @@ export default function CategoryManagement() {
           </table>
         )}
       </div>
+      <PaginationControls
+        page={page}
+        pageSize={pageSize}
+        totalItems={categories.length}
+        totalPages={totalPages}
+        onPageChange={setPage}
+        onPageSizeChange={changePageSize}
+      />
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>

@@ -12,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const money = (value: number | string, currency = "INR") =>
   `${currency === "INR" ? "₹" : currency} ${Number(value).toFixed(2)}`;
@@ -21,20 +22,30 @@ export default function Sales() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selected, setSelected] = useState<Order | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState({ total_items: 0, total_pages: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      setOrders(await listOrders());
+      const result = await listOrders({ page, page_size: pageSize });
+      setOrders(result.items);
+      setPagination(result.pagination);
     } catch {
       setError("Unable to load sales data.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
   useEffect(() => {
     load();
   }, [load]);
+
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const revenue = orders.reduce((sum, order) => sum + Number(order.total), 0);
   const units = orders.reduce(
@@ -139,6 +150,14 @@ export default function Sales() {
             </tbody>
           </table>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          totalItems={pagination.total_items}
+          totalPages={pagination.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={changePageSize}
+        />
       </div>
       <Dialog
         open={!!selected}

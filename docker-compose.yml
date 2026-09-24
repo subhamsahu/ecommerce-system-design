@@ -1,26 +1,56 @@
-version: "3.9"
 services:
-  db:
-    image: postgres:16-alpine
+  ecomm-postgrs-service:
+    image: postgres:16.3
+    container_name: ecomm_postgres_container
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: app_db
+      POSTGRES_USER: labadmin
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root123}
+      POSTGRES_DB: ecommerce
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - ./volumes/postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labadmin -d ecommerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - ecommerce-network
 
   api:
-    build: .
+    build: ./server
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://postgres:password@db:5432/app_db
-      SECRET_KEY: change-this-secret-key-in-production
+      APP_ENV: development
+      DATABASE_URL: postgresql+psycopg2://labadmin:${POSTGRES_PASSWORD:-root123}@ecomm-postgrs-service:5432/ecommerce
+      JWT_SECRET: ${JWT_SECRET:-replace-with-a-long-local-secret}
+      ACCESS_TOKEN_TTL_MINUTES: 30
     depends_on:
-      - db
+      ecomm-postgrs-service:
+        condition: service_healthy
+    networks:
+      - ecommerce-network
+    restart: unless-stopped
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+
+  client:
+    build:
+      context: ./client
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    container_name: ecomm_client_container
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - ecommerce-network
     restart: unless-stopped
 
-volumes:
-  postgres_data:
+networks:
+  ecommerce-network:
+    driver: bridge

@@ -19,6 +19,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const money = (value: number | string, currency = "INR") =>
   `${currency === "INR" ? "₹" : currency} ${Number(value).toFixed(2)}`;
@@ -54,27 +55,36 @@ export default function ProductManagement() {
   const [form, setForm] = useState<ProductForm>(emptyForm);
   const [publishOnCreate, setPublishOnCreate] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState({ total_items: 0, total_pages: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [productData, categoryData] = await Promise.all([
-        listAdminProducts(),
+      const [productPage, categoryData] = await Promise.all([
+        listAdminProducts({ page, page_size: pageSize }),
         listCategories(),
       ]);
-      setProducts(productData);
+      setProducts(productPage.items);
+      setPagination(productPage.pagination);
       setCategories(categoryData);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, pageSize]);
 
   useEffect(() => {
     load();
   }, [load]);
+
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const openCreate = () => {
     setEditing(null);
@@ -114,13 +124,16 @@ export default function ProductManagement() {
         currency: form.currency,
         category_id: form.category_id ? Number(form.category_id) : null,
       };
-      if (editing)
+      if (editing) {
         await updateProduct(editing.id, {
-          ...payload,
+          name: payload.name,
+          description: payload.description,
+          price: payload.price,
+          category_id: payload.category_id,
           is_published: editing.is_published,
           is_archived: editing.is_archived,
         });
-      else {
+      } else {
         const created = await createProduct(payload);
         if (publishOnCreate)
           await updateProduct(created.id, { is_published: true });
@@ -301,6 +314,14 @@ export default function ProductManagement() {
             </tbody>
           </table>
         )}
+        <PaginationControls
+          page={page}
+          pageSize={pageSize}
+          totalItems={pagination.total_items}
+          totalPages={pagination.total_pages}
+          onPageChange={setPage}
+          onPageSizeChange={changePageSize}
+        />
       </div>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>

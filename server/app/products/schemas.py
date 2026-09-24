@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CategoryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=120)
     description: str | None = None
 
@@ -17,7 +19,17 @@ class CategoryResponse(CategoryCreate):
     created_at: datetime
 
 
+class CategoryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    description: str | None = None
+    is_active: bool | None = None
+
+
 class ProductCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=200)
     sku: str = Field(min_length=1, max_length=80)
     description: str | None = None
@@ -27,6 +39,8 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     price: Decimal | None = Field(default=None, ge=0, decimal_places=2)

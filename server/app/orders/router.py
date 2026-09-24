@@ -1,24 +1,16 @@
-from decimal import Decimal
+from datetime import datetime
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
 from sqlalchemy.orm import Session, joinedload
 
 from app import models
 from app.auth import get_current_user, require_admin
-from app.cart.router import _get_cart
 from app.core.database import get_db
+from app.core.schemas import Page
 from app.orders.schemas import CheckoutRequest, OrderResponse, StatusUpdate
+from app.orders.service import cancel_order, checkout, update_status
 
 router = APIRouter(prefix="/api/v1/orders", tags=["Orders"])
-ALLOWED_TRANSITIONS = {
-    models.OrderStatus.paid: {models.OrderStatus.processing, models.OrderStatus.cancelled},
-    models.OrderStatus.processing: {models.OrderStatus.shipped, models.OrderStatus.cancelled},
-    models.OrderStatus.shipped: {models.OrderStatus.delivered},
-    models.OrderStatus.delivered: set(),
-    models.OrderStatus.pending_payment: {models.OrderStatus.cancelled},
-    models.OrderStatus.cancelled: set(),
-    models.OrderStatus.refunded: set(),
-}
 
 
 def _response(order: models.Order) -> OrderResponse:
@@ -28,54 +20,55 @@ def _response(order: models.Order) -> OrderResponse:
         currency=order.currency,
         total=order.total,
         created_at=order.created_at,
-        items=[{"product_name": item.product_name, "sku": item.sku, "quantity": item.quantity, "unit_price": item.unit_price} for item in order.items],
+        items=[
+            {"product_name": item.product_name, "sku": item.sku, "quantity": item.quantity, "unit_price": item.unit_price}
+            for item in order.items
+        ],
     )
 
 
-@router.post("", response_model=OrderResponse, status_code=201)
-def checkout(
+@router.post("", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
+def create_order(
     body: CheckoutRequest,
+    response: Response,
     idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    existing = db.query(models.Order).options(joinedload(models.Order.items)).filter(models.Order.user_id == current_user.id, models.Order.idempotency_key == idempotency_key).first()
-    if existing:
-        return _response(existing)
-    cart = _get_cart(db, current_user.id)
-    if not cart.items:
-        raise HTTPException(status_code=422, detail="Cart is empty")
-    address = models.Address(user_id=current_user.id, **body.address.model_dump())
-    db.add(address)
-    db.flush()
-    total = Decimal("0.00")
-    order = models.Order(user_id=current_user.id, address_id=address.id, idempotency_key=idempotency_key, total=Decimal("0.00"), currency="INR")
-    db.add(order)
-    db.flush()
-    for cart_item in list(cart.items):
-        inventory = db.query(models.Inventory).filter(models.Inventory.product_id == cart_item.product_id).with_for_update().first()
-        product = db.get(models.Product, cart_item.product_id)
-        if not product or not inventory or inventory.quantity < cart_item.quantity:
-            db.rollback()
-            raise HTTPException(status_code=409, detail=f"Insufficient inventory for {product.name if product else 'product'}")
-        total += product.price * cart_item.quantity
-        inventory.quantity -= cart_item.quantity
-        db.add(models.InventoryMovement(product_id=product.id, quantity_delta=-cart_item.quantity, reason="Order checkout", reference_type="order", reference_id=idempotency_key, created_by=current_user.id))
-        order.items.append(models.OrderItem(product_id=product.id, product_name=product.name, sku=product.sku, quantity=cart_item.quantity, unit_price=product.price))
-        db.delete(cart_item)
-    order.total = total
-    order.history.append(models.OrderStatusHistory(to_status=order.status.value, changed_by=current_user.id))
-    db.commit()
-    db.refresh(order)
+    order, created = checkout(db, current_user, body, idempotency_key)
+    if not created:
+        response.status_code = status.HTTP_200_OK
     return _response(order)
 
 
-@router.get("", response_model=list[OrderResponse])
-def list_orders(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+@router.get("", response_model=Page[OrderResponse])
+def list_orders(
+    status_filter: models.OrderStatus | None = Query(default=None, alias="status"),
+    customer_id: int | None = Query(default=None, ge=1),
+    created_after: datetime | None = None,
+    created_before: datetime | None = None,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     query = db.query(models.Order).options(joinedload(models.Order.items))
     if current_user.role != models.UserRole.admin:
         query = query.filter(models.Order.user_id == current_user.id)
-    return [_response(order) for order in query.order_by(models.Order.created_at.desc()).all()]
+    elif customer_id is not None:
+        query = query.filter(models.Order.user_id == customer_id)
+    if status_filter is not None:
+        query = query.filter(models.Order.status == status_filter)
+    if created_after is not None:
+        query = query.filter(models.Order.created_at >= created_after)
+    if created_before is not None:
+        query = query.filter(models.Order.created_at <= created_before)
+    total = query.order_by(None).count()
+    rows = query.order_by(models.Order.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    return {
+        "items": [_response(order) for order in rows],
+        "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
+    }
 
 
 @router.get("/{order_id}", response_model=OrderResponse)
@@ -90,43 +83,20 @@ def get_order(order_id: int, db: Session = Depends(get_db), current_user: models
 
 
 @router.post("/{order_id}/cancellation", response_model=OrderResponse)
-def cancel_order(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    order = db.query(models.Order).options(joinedload(models.Order.items)).filter(models.Order.id == order_id, models.Order.user_id == current_user.id).with_for_update().first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if models.OrderStatus.cancelled not in ALLOWED_TRANSITIONS.get(order.status, set()):
-        raise HTTPException(status_code=409, detail="Order cannot be cancelled in its current state")
-    order.status = models.OrderStatus.cancelled
-    for item in order.items:
-        inventory = db.query(models.Inventory).filter(models.Inventory.product_id == item.product_id).with_for_update().first()
-        if inventory:
-            inventory.quantity += item.quantity
-            db.add(models.InventoryMovement(product_id=item.product_id, quantity_delta=item.quantity, reason="Order cancellation", reference_type="order", reference_id=str(order.id), created_by=current_user.id))
-    payment = db.query(models.Payment).filter(models.Payment.order_id == order.id, models.Payment.status == models.PaymentStatus.succeeded).first()
-    if payment:
-        payment.status = models.PaymentStatus.refunded
-        db.add(models.Refund(payment_id=payment.id, amount=payment.amount, reason="Order cancellation"))
-        order.status = models.OrderStatus.refunded
-    order.history.append(models.OrderStatusHistory(to_status=order.status.value, changed_by=current_user.id))
-    db.commit()
-    db.refresh(order)
-    return _response(order)
+def cancellation(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Customer or administrator cancellation, including inventory and refund compensation."""
+    return _response(cancel_order(db, order_id, current_user))
 
 
 @router.patch("/{order_id}/status", response_model=OrderResponse)
-def update_order_status(order_id: int, body: StatusUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(require_admin)):
-    order = db.query(models.Order).options(joinedload(models.Order.items)).filter(models.Order.id == order_id).first()
-    if not order:
-        raise HTTPException(status_code=404, detail="Order not found")
+def change_order_status(
+    order_id: int,
+    body: StatusUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
     try:
         new_status = models.OrderStatus(body.status)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Unknown order status") from exc
-    if new_status not in ALLOWED_TRANSITIONS.get(order.status, set()):
-        raise HTTPException(status_code=409, detail="Invalid order status transition")
-    old_status = order.status.value
-    order.status = new_status
-    order.history.append(models.OrderStatusHistory(from_status=old_status, to_status=new_status.value, changed_by=current_user.id))
-    db.commit()
-    db.refresh(order)
-    return _response(order)
+    return _response(update_status(db, order_id, new_status, current_user))

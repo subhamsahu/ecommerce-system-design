@@ -1,0 +1,485 @@
+{
+  "info": {
+    "_postman_id": "3b9b4f9b-7b7e-4e2c-8d2f-4e5a6b7c8d9e",
+    "name": "E-commerce System Design API",
+    "description": "Postman collection for the FastAPI server. Start the server on http://localhost:8000, run Login, then use the protected requests with the captured JWT.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8000"
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "categoryId",
+      "value": "1"
+    },
+    {
+      "key": "productId",
+      "value": "1"
+    },
+    {
+      "key": "cartItemId",
+      "value": "1"
+    },
+    {
+      "key": "orderId",
+      "value": "1"
+    },
+    {
+      "key": "paymentId",
+      "value": "1"
+    },
+    {
+      "key": "userId",
+      "value": "1"
+    },
+    {
+      "key": "role",
+      "value": "staff"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Root",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/"
+          }
+        },
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Register customer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"customer1\",\n  \"email\": \"customer1@example.com\",\n  \"full_name\": \"Customer One\",\n  \"password\": \"password123\",\n  \"role\": \"customer\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/register"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const response = pm.response.json();",
+                  "if (response.access_token) pm.collectionVariables.set('accessToken', response.access_token);",
+                  "if (response.user && response.user.id) pm.collectionVariables.set('userId', response.user.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"admin\",\n  \"password\": \"your-password\"\n}"
+            },
+            "url": "{{baseUrl}}/api/v1/auth/login"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalog",
+      "item": [
+        {
+          "name": "List categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/categories"
+          }
+        },
+        {
+          "name": "List published products",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/products?search=&category_id={{categoryId}}&min_price=&max_price=&page=1&page_size=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "products"],
+              "query": [
+                {"key": "search", "value": "", "disabled": true},
+                {"key": "category_id", "value": "{{categoryId}}", "disabled": true},
+                {"key": "min_price", "value": "", "disabled": true},
+                {"key": "max_price", "value": "", "disabled": true},
+                {"key": "page", "value": "1"},
+                {"key": "page_size", "value": "20"}
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get published product",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{baseUrl}}/api/v1/products/{{productId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Catalog",
+      "item": [
+        {
+          "name": "Get dashboard",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/admin/dashboard"
+          }
+        },
+        {
+          "name": "Create category",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('categoryId', response.id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"name\": \"Example category\",\n  \"description\": \"Created from Postman\"\n}"},
+            "url": "{{baseUrl}}/api/v1/admin/categories"
+          }
+        },
+        {
+          "name": "List all categories",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/admin/categories"
+          }
+        },
+        {
+          "name": "Update category",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"description\": \"Updated from Postman\",\n  \"is_active\": true\n}"},
+            "url": "{{baseUrl}}/api/v1/admin/categories/{{categoryId}}"
+          }
+        },
+        {
+          "name": "List all products",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/admin/products?page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Create product",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('productId', response.id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"name\": \"Example product\",\n  \"sku\": \"EXAMPLE-001\",\n  \"description\": \"Created from Postman\",\n  \"price\": 999.00,\n  \"currency\": \"INR\",\n  \"category_id\": {{categoryId}}\n}"},
+            "url": "{{baseUrl}}/api/v1/admin/products"
+          }
+        },
+        {
+          "name": "Update product and publish",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"is_published\": true,\n  \"is_archived\": false\n}"},
+            "url": "{{baseUrl}}/api/v1/admin/products/{{productId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Inventory",
+      "item": [
+        {
+          "name": "Adjust inventory",
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"product_id\": {{productId}},\n  \"quantity_delta\": 10,\n  \"reason\": \"Initial stock\"\n}"},
+            "url": "{{baseUrl}}/api/v1/admin/inventory/adjustments"
+          }
+        },
+        {
+          "name": "List low-stock products",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/admin/inventory/low-stock"
+          }
+        },
+        {
+          "name": "List inventory movements",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/admin/inventory/movements?page=1&page_size=20"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Users",
+      "item": [
+        {
+          "name": "Get my profile",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/users/me"
+          }
+        },
+        {
+          "name": "Update my profile",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"full_name\": \"Updated Name\"\n}"},
+            "url": "{{baseUrl}}/api/v1/users/me"
+          }
+        },
+        {
+          "name": "List users (admin)",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/users"
+          }
+        },
+        {
+          "name": "Create user (admin)",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('userId', response.id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"username\": \"staff1\",\n  \"email\": \"staff1@example.com\",\n  \"full_name\": \"Staff One\",\n  \"password\": \"password123\",\n  \"role\": \"staff\"\n}"},
+            "url": "{{baseUrl}}/api/v1/users"
+          }
+        },
+        {
+          "name": "Update user (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"is_active\": true\n}"},
+            "url": "{{baseUrl}}/api/v1/users/{{userId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Permissions",
+      "item": [
+        {
+          "name": "Get role permissions",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/permissions"
+          }
+        },
+        {
+          "name": "Update role permissions",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"permissions\": {\n    \"canViewDashboard\": true,\n    \"canViewUserManagement\": false,\n    \"canManageUsers\": false,\n    \"canViewSettings\": true\n  }\n}"},
+            "url": "{{baseUrl}}/permissions/{{role}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cart",
+      "item": [
+        {
+          "name": "Get cart",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/cart"
+          }
+        },
+        {
+          "name": "Add item to cart",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.items && response.items.length) pm.collectionVariables.set('cartItemId', response.items[response.items.length - 1].id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"product_id\": {{productId}},\n  \"quantity\": 1\n}"},
+            "url": "{{baseUrl}}/api/v1/cart/items"
+          }
+        },
+        {
+          "name": "Update cart item",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"quantity\": 2\n}"},
+            "url": "{{baseUrl}}/api/v1/cart/items/{{cartItemId}}"
+          }
+        },
+        {
+          "name": "Remove cart item",
+          "request": {
+            "method": "DELETE",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/cart/items/{{cartItemId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Create order",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('orderId', response.id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Idempotency-Key", "value": "order-{{$guid}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"address\": {\n    \"line1\": \"123 Example Street\",\n    \"line2\": \"Apartment 4B\",\n    \"city\": \"Bengaluru\",\n    \"state\": \"KA\",\n    \"postal_code\": \"560001\",\n    \"country\": \"IN\"\n  }\n}"},
+            "url": "{{baseUrl}}/api/v1/orders"
+          }
+        },
+        {
+          "name": "List orders",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/orders?page=1&page_size=20"
+          }
+        },
+        {
+          "name": "Get order",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/orders/{{orderId}}"
+          }
+        },
+        {
+          "name": "Cancel order",
+          "request": {
+            "method": "POST",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/orders/{{orderId}}/cancellation"
+          }
+        },
+        {
+          "name": "Update order status (admin)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"status\": \"processing\"\n}"},
+            "url": "{{baseUrl}}/api/v1/orders/{{orderId}}/status"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payments",
+      "item": [
+        {
+          "name": "Attempt payment",
+          "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('paymentId', response.id);"]}}],
+          "request": {
+            "method": "POST",
+            "header": [
+              {"key": "Authorization", "value": "Bearer {{accessToken}}"},
+              {"key": "Content-Type", "value": "application/json"},
+              {"key": "Idempotency-Key", "value": "payment-{{$guid}}"}
+            ],
+            "body": {"mode": "raw", "raw": "{\n  \"outcome\": \"success\"\n}"},
+            "url": "{{baseUrl}}/api/v1/payments/{{orderId}}/attempt"
+          }
+        },
+        {
+          "name": "List payments for order",
+          "request": {
+            "method": "GET",
+            "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
+            "url": "{{baseUrl}}/api/v1/payments/{{orderId}}"
+          }
+        }
+      ]
+    }
+  ]
+}

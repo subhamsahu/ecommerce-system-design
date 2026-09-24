@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAppSelector } from "@/store/hooks";
-import { listUsers, createUser, updateUser, deleteUser } from "@/api/client";
+import { listUsers, createUser, deactivateUser, updateUser } from "@/api/client";
 import type { UserResponse } from "@/types";
 import { Button } from "@/components/ui/button";
+import { PaginationControls } from "@/components/PaginationControls";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -31,6 +32,9 @@ import {
 
 type DialogMode = "create" | "edit-role" | "reset-password" | null;
 type FormRole = "admin" | "staff" | "employee";
+const errorMessage = (error: unknown) =>
+  (error as { response?: { data?: { detail?: string } } })?.response?.data
+    ?.detail ?? "Something went wrong. Please try again.";
 
 export default function UserManagement() {
   const currentUser = useAppSelector((s) => s.auth.user);
@@ -45,10 +49,14 @@ export default function UserManagement() {
 
   // Form fields
   const [formUsername, setFormUsername] = useState("");
+  const [formFullName, setFormFullName] = useState("");
+  const [formEmail, setFormEmail] = useState("");
   const [formPassword, setFormPassword] = useState("");
   const [formRole, setFormRole] = useState<FormRole>("employee");
   const [formMsg, setFormMsg] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   // Delete confirmation
   const [deleteTarget, setDeleteTarget] = useState<UserResponse | null>(null);
@@ -69,8 +77,17 @@ export default function UserManagement() {
     fetchUsers();
   }, [fetchUsers]);
 
+  const totalPages = Math.max(1, Math.ceil(users.length / pageSize));
+  const visibleUsers = users.slice((page - 1) * pageSize, page * pageSize);
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
+
   const openCreate = () => {
     setFormUsername("");
+    setFormFullName("");
+    setFormEmail("");
     setFormPassword("");
     setFormRole("employee");
     setFormMsg("");
@@ -98,25 +115,27 @@ export default function UserManagement() {
   };
 
   const handleCreate = async () => {
-    if (!formUsername.trim() || !formPassword.trim()) {
-      setFormMsg("Username and password are required.");
+    if (!formUsername.trim() || !formFullName.trim() || !formEmail.trim() || !formPassword.trim()) {
+      setFormMsg("Name, email, username, and password are required.");
       return;
     }
-    if (formPassword.length < 6) {
-      setFormMsg("Password must be at least 6 characters.");
+    if (formPassword.length < 8) {
+      setFormMsg("Password must be at least 8 characters.");
       return;
     }
     setSubmitting(true);
     try {
       await createUser({
         username: formUsername.trim(),
+        full_name: formFullName.trim(),
+        email: formEmail.trim(),
         password: formPassword,
         role: formRole,
       });
       closeDialog();
       fetchUsers();
-    } catch (e: any) {
-      setFormMsg(e?.response?.data?.detail ?? "Failed to create user.");
+    } catch (error) {
+      setFormMsg(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -129,8 +148,8 @@ export default function UserManagement() {
       await updateUser(selectedUser.id, { role: formRole });
       closeDialog();
       fetchUsers();
-    } catch (e: any) {
-      setFormMsg(e?.response?.data?.detail ?? "Failed to update role.");
+    } catch (error) {
+      setFormMsg(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -138,16 +157,16 @@ export default function UserManagement() {
 
   const handleResetPassword = async () => {
     if (!selectedUser) return;
-    if (formPassword.length < 6) {
-      setFormMsg("Password must be at least 6 characters.");
+    if (formPassword.length < 8) {
+      setFormMsg("Password must be at least 8 characters.");
       return;
     }
     setSubmitting(true);
     try {
       await updateUser(selectedUser.id, { password: formPassword });
       closeDialog();
-    } catch (e: any) {
-      setFormMsg(e?.response?.data?.detail ?? "Failed to reset password.");
+    } catch (error) {
+      setFormMsg(errorMessage(error));
     } finally {
       setSubmitting(false);
     }
@@ -157,11 +176,11 @@ export default function UserManagement() {
     if (!deleteTarget) return;
     setSubmitting(true);
     try {
-      await deleteUser(deleteTarget.id);
+      await deactivateUser(deleteTarget.id);
       setDeleteTarget(null);
       fetchUsers();
-    } catch (e: any) {
-      setError(e?.response?.data?.detail ?? "Failed to delete user.");
+    } catch (error) {
+      setError(errorMessage(error));
       setDeleteTarget(null);
     } finally {
       setSubmitting(false);
@@ -275,13 +294,13 @@ export default function UserManagement() {
                   </tr>
                 </thead>
                 <tbody>
-                  {users.map((u, idx) => (
+                  {visibleUsers.map((u, idx) => (
                     <tr
                       key={u.id}
                       className="border-b last:border-0 hover:bg-muted/20 transition-colors"
                     >
                       <td className="py-3 px-4 text-muted-foreground">
-                        {idx + 1}
+                        {(page - 1) * pageSize + idx + 1}
                       </td>
                       <td className="py-3 px-4 font-medium flex items-center gap-2">
                         {u.role === "admin" ? (
@@ -337,7 +356,7 @@ export default function UserManagement() {
                             className="text-destructive hover:text-destructive"
                             onClick={() => setDeleteTarget(u)}
                             disabled={u.username === currentUser?.username}
-                            title="Delete user"
+                            title="Deactivate user"
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -349,6 +368,14 @@ export default function UserManagement() {
               </table>
             </div>
           )}
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            totalItems={users.length}
+            totalPages={totalPages}
+            onPageChange={setPage}
+            onPageSizeChange={changePageSize}
+          />
         </CardContent>
       </Card>
 
@@ -375,12 +402,29 @@ export default function UserManagement() {
               />
             </div>
             <div>
+              <label className="text-sm font-medium">Full name</label>
+              <Input
+                value={formFullName}
+                onChange={(e) => setFormFullName(e.target.value)}
+                placeholder="e.g. John Doe"
+              />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Email</label>
+              <Input
+                type="email"
+                value={formEmail}
+                onChange={(e) => setFormEmail(e.target.value)}
+                placeholder="john@example.com"
+              />
+            </div>
+            <div>
               <label className="text-sm font-medium">Password</label>
               <Input
                 type="password"
                 value={formPassword}
                 onChange={(e) => setFormPassword(e.target.value)}
-                placeholder="Min 6 characters"
+                placeholder="Min 8 characters"
               />
             </div>
             <div>
@@ -489,11 +533,11 @@ export default function UserManagement() {
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
+            <DialogTitle>Deactivate User</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete{" "}
-              <strong>{deleteTarget?.username}</strong>? This action cannot be
-              undone.
+              Are you sure you want to deactivate{" "}
+              <strong>{deleteTarget?.username}</strong>? Their account will no
+              longer be able to sign in.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -505,7 +549,7 @@ export default function UserManagement() {
               onClick={handleDelete}
               disabled={submitting}
             >
-              {submitting ? "Deleting…" : "Delete"}
+              {submitting ? "Deactivating…" : "Deactivate"}
             </Button>
           </DialogFooter>
         </DialogContent>

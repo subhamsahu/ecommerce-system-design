@@ -2,6 +2,10 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { getRolePermissions, updateRolePermissions } from "@/api/client";
 import type { RolePermissionsMap, PermissionSet } from "@/types";
 
+const errorMessage = (error: unknown) =>
+  (error as { response?: { data?: { detail?: string } } })?.response?.data
+    ?.detail || "Failed to save permissions";
+
 // ── Default fallback (used before API loads) ──────────────────────────────────
 
 export const DEFAULT_ROLE_PERMISSIONS: RolePermissionsMap = {
@@ -66,10 +70,8 @@ export const saveRolePermissions = createAsyncThunk(
     try {
       const updated = await updateRolePermissions(role, permissions);
       return { role, permissions: updated };
-    } catch (e: any) {
-      return rejectWithValue(
-        e?.response?.data?.detail ?? "Failed to save permissions",
-      );
+    } catch (error) {
+      return rejectWithValue(errorMessage(error));
     }
   },
 );

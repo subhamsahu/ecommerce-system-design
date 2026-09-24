@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaginationControls } from "@/components/PaginationControls";
 
 const money = (value: number | string, currency = "INR") =>
   `${currency === "INR" ? "₹" : currency} ${Number(value).toFixed(2)}`;
@@ -70,6 +71,9 @@ export default function Store() {
   const [checkoutError, setCheckoutError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [completedOrder, setCompletedOrder] = useState<Order | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [pagination, setPagination] = useState({ total_items: 0, total_pages: 0 });
 
   const loadProducts = useCallback(async () => {
     setLoading(true);
@@ -78,15 +82,26 @@ export default function Store() {
       const result = await listProducts({
         search: search.trim() || undefined,
         category_id: categoryId ? Number(categoryId) : undefined,
-        page_size: 100,
+        page,
+        page_size: pageSize,
       });
       setProducts(result.items);
+      setPagination(result.pagination);
     } catch (err) {
       setError(errorMessage(err));
     } finally {
       setLoading(false);
     }
+  }, [categoryId, page, pageSize, search]);
+
+  useEffect(() => {
+    setPage(1);
   }, [categoryId, search]);
+
+  const changePageSize = (size: number) => {
+    setPageSize(size);
+    setPage(1);
+  };
 
   const loadStore = useCallback(async () => {
     try {
@@ -121,14 +136,13 @@ export default function Store() {
 
   const changeQuantity = async (
     itemId: number,
-    productId: number,
     quantity: number,
   ) => {
     try {
       setCart(
         quantity < 1
           ? await removeCartItem(itemId)
-          : await updateCartItem(itemId, productId, quantity),
+          : await updateCartItem(itemId, quantity),
       );
     } catch (err) {
       setError(errorMessage(err));
@@ -293,7 +307,14 @@ export default function Store() {
           ))}
         </div>
       )}
-      +
+      <PaginationControls
+        page={page}
+        pageSize={pageSize}
+        totalItems={pagination.total_items}
+        totalPages={pagination.total_pages}
+        onPageChange={setPage}
+        onPageSizeChange={changePageSize}
+      />
       <Dialog open={cartOpen} onOpenChange={setCartOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -327,7 +348,6 @@ export default function Store() {
                       onClick={() =>
                         changeQuantity(
                           item.id,
-                          item.product_id,
                           item.quantity - 1,
                         )
                       }
@@ -345,7 +365,6 @@ export default function Store() {
                       onClick={() =>
                         changeQuantity(
                           item.id,
-                          item.product_id,
                           item.quantity + 1,
                         )
                       }
@@ -360,7 +379,7 @@ export default function Store() {
                     variant="ghost"
                     size="icon"
                     className="h-7 w-7 text-destructive"
-                    onClick={() => changeQuantity(item.id, item.product_id, 0)}
+                    onClick={() => changeQuantity(item.id, 0)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>

@@ -28,7 +28,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     payload["exp"] = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.access_token_expire_minutes)
     )
-    return jwt.encode(payload, settings.secret_key, algorithm=settings.algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.algorithm)
 
 
 def get_current_user(
@@ -41,7 +41,7 @@ def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
     try:
-        payload = jwt.decode(credentials.credentials, settings.secret_key, algorithms=[settings.algorithm])
+        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=[settings.algorithm])
         username = payload.get("sub")
     except JWTError as exc:
         raise error from exc

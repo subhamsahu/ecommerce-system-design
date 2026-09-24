@@ -33,8 +33,8 @@ export default function Dashboard() {
         listOrders(),
         listLowStock(),
       ]);
-      setProducts(productData);
-      setOrders(orderData);
+      setProducts(productData.items);
+      setOrders(orderData.items);
       setLowStockCount(lowStockData.length);
     } catch {
       setError("Unable to load the latest admin metrics.");

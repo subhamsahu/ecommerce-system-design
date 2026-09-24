@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -11,8 +12,10 @@ router = APIRouter(prefix="/api/v1/users", tags=["Users"])
 
 
 class ProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     full_name: str | None = Field(default=None, max_length=200)
-    email: str | None = Field(default=None, max_length=320)
+    email: str | None = Field(default=None, min_length=1, max_length=320)
     password: str | None = Field(default=None, min_length=8, max_length=128)
 
 
@@ -53,15 +56,22 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db), _: models.Us
     username = user_in.username.strip().lower()
     if db.query(models.User).filter(models.User.username == username).first():
         raise HTTPException(status_code=409, detail="Username already exists")
+    email = user_in.email.strip().lower()
+    if db.query(models.User).filter(models.User.email == email).first():
+        raise HTTPException(status_code=409, detail="Email already exists")
     user = models.User(
         username=username,
-        email=user_in.email.strip().lower() if user_in.email else None,
+        email=email,
         full_name=user_in.full_name,
         hashed_password=hash_password(user_in.password),
         role=user_in.role,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="User conflicts with an existing record") from exc
     db.refresh(user)
     return user
 
@@ -76,11 +86,19 @@ def update_user(user_id: int, updates: AdminUserUpdate, db: Session = Depends(ge
     if updates.is_active is not None:
         user.is_active = updates.is_active
     if updates.email is not None:
-        user.email = updates.email.strip().lower()
+        email = updates.email.strip().lower()
+        duplicate = db.query(models.User).filter(models.User.email == email, models.User.id != user.id).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="Email already exists")
+        user.email = email
     if updates.full_name is not None:
         user.full_name = updates.full_name
     if updates.password:
         user.hashed_password = hash_password(updates.password)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="User conflicts with an existing record") from exc
     db.refresh(user)
     return user

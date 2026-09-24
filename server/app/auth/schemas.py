@@ -4,9 +4,11 @@ from app.models import UserRole
 
 
 class UserCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: str = Field(min_length=3, max_length=100)
-    email: str | None = Field(default=None, max_length=320)
-    full_name: str | None = Field(default=None, max_length=200)
+    email: str = Field(max_length=320)
+    full_name: str = Field(min_length=1, max_length=200)
     password: str = Field(min_length=8, max_length=128)
     role: UserRole = UserRole.customer
 
@@ -24,8 +26,10 @@ class UserResponse(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=3, max_length=100)
+    password: str = Field(min_length=8, max_length=128)
 
 
 class Token(BaseModel):

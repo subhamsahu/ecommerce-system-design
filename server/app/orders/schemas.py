@@ -1,10 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AddressInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     line1: str = Field(min_length=1, max_length=200)
     line2: str | None = None
     city: str = Field(min_length=1, max_length=100)
@@ -14,6 +15,7 @@ class AddressInput(BaseModel):
 
 
 class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     address: AddressInput
 
 
@@ -34,4 +36,6 @@ class OrderResponse(BaseModel):
 
 
 class StatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     status: str

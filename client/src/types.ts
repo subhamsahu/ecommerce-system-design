@@ -114,6 +114,16 @@ export interface ProductPage {
   };
 }
 
+export interface OrderPage {
+  items: Order[];
+  pagination: {
+    page: number;
+    page_size: number;
+    total_items: number;
+    total_pages: number;
+  };
+}
+
 export interface CartItem {
   id: number;
   product_id: number;

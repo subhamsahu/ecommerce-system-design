@@ -2,6 +2,10 @@ import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { loginUser as apiLogin } from "@/api/client";
 import type { UserResponse } from "@/types";
 
+const errorMessage = (error: unknown) =>
+  (error as { response?: { data?: { detail?: string } } })?.response?.data
+    ?.detail || "Login failed";
+
 // Initial state
 const storedUser = (() => {
   try {
@@ -32,9 +36,8 @@ export const loginUser = createAsyncThunk(
       localStorage.setItem("token", data.access_token);
       localStorage.setItem("user", JSON.stringify(data.user));
       return { token: data.access_token, user: data.user };
-    } catch (error: any) {
-      const msg = error.response?.data?.detail || "Login failed";
-      return rejectWithValue(msg);
+    } catch (error) {
+      return rejectWithValue(errorMessage(error));
     }
   },
 );

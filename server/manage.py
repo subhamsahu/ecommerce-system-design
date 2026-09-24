@@ -12,6 +12,7 @@ Usage:
     python manage.py dbshell                      # Open database shell
     python manage.py reset_db                     # Reset database (WARNING: deletes all data)
     python manage.py seed                         # Seed initial data (permissions)
+    python manage.py seed_fake --count 1000       # Seed repeatable fake users/products/stock/carts
 """
 
 import sys
@@ -23,14 +24,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import subprocess
 import getpass
+from decimal import Decimal
 from sqlalchemy import select
 from sqlmodel import Session
-from app.core.database import Base, engine, ensure_sqlite_compatibility
+from app.core.database import Base, engine
+from app import models
 from app.models import User, UserRole, RolePermissions, DEFAULT_ROLE_PERMISSIONS
 from app.auth import hash_password
-
-ensure_sqlite_compatibility()
-
 
 def makemigrations(message: str = "auto migration"):
     """Create a new Alembic migration"""
@@ -112,6 +112,15 @@ def createsuperuser():
                 print(f"❌ User '{username}' already exists")
                 continue
             break
+
+        email = input("Email: ").strip().lower()
+        full_name = input("Full name: ").strip()
+        if not email or not full_name:
+            print("❌ Email and full name are required")
+            return False
+        if db.exec(select(User).where(User.email == email)).first():
+            print(f"❌ Email '{email}' already exists")
+            return False
         
         # Get password
         while True:
@@ -130,6 +139,8 @@ def createsuperuser():
         hashed_password = hash_password(password)
         user = User(
             username=username,
+            email=email,
+            full_name=full_name,
             hashed_password=hashed_password,
             role=UserRole.admin
         )
@@ -168,6 +179,15 @@ def createuser():
                 print(f"❌ User '{username}' already exists")
                 continue
             break
+
+        email = input("Email: ").strip().lower()
+        full_name = input("Full name: ").strip()
+        if not email or not full_name:
+            print("❌ Email and full name are required")
+            return False
+        if db.exec(select(User).where(User.email == email)).first():
+            print(f"❌ Email '{email}' already exists")
+            return False
         
         # Get password
         while True:
@@ -205,6 +225,8 @@ def createuser():
         hashed_password = hash_password(password)
         user = User(
             username=username,
+            email=email,
+            full_name=full_name,
             hashed_password=hashed_password,
             role=role
         )
@@ -253,6 +275,100 @@ def seed():
         db.rollback()
         print(f"❌ Error seeding data: {e}")
         return False
+    finally:
+        db.close()
+
+
+def seed_fake(count: int = 100):
+    """Create repeatable, duplicate-safe fake data for local/load testing.
+
+    ``count`` is the target number for each primary fixture group: customers,
+    products, inventory records, and carts. Existing seed identifiers are
+    reused, so rerunning the command does not create duplicates.
+    """
+    if count < 1 or count > 1_000_000:
+        raise ValueError("count must be between 1 and 1,000,000")
+
+    print(f"🌱 Seeding up to {count} fake customers, products, inventory records, and carts...")
+    db = Session(engine)
+    batch_size = 200
+    try:
+        category_names = ["Electronics", "Home", "Books", "Apparel", "Sports"]
+        categories = []
+        for name in category_names:
+            category = db.query(models.Category).filter(models.Category.name == name).first()
+            if not category:
+                slug = name.lower().replace(" ", "-")
+                category = models.Category(name=name, slug=slug, description=f"Seed category: {name}")
+                db.add(category)
+                db.flush()
+            categories.append(category)
+
+        # One hash is intentional: these are non-production test accounts.
+        seeded_password = hash_password("TestPassword123!")
+        created_users = created_products = created_inventory = created_carts = 0
+        for start in range(1, count + 1, batch_size):
+            end = min(start + batch_size, count + 1)
+            for index in range(start, end):
+                username = f"seed_user_{index:06d}"
+                user = db.query(User).filter(User.username == username).first()
+                if not user:
+                    user = User(
+                        username=username,
+                        email=f"{username}@example.test",
+                        full_name=f"Seed User {index:06d}",
+                        hashed_password=seeded_password,
+                        role=UserRole.customer,
+                    )
+                    db.add(user)
+                    db.flush()
+                    created_users += 1
+
+                sku = f"SEED-{index:06d}"
+                product = db.query(models.Product).filter(models.Product.sku == sku).first()
+                if not product:
+                    product = models.Product(
+                        category_id=categories[(index - 1) % len(categories)].id,
+                        name=f"Seed Product {index:06d}",
+                        sku=sku,
+                        description="Generated test product",
+                        price=Decimal(str(10 + (index % 500))),
+                        currency="INR",
+                        is_published=True,
+                    )
+                    db.add(product)
+                    db.flush()
+                    created_products += 1
+
+                inventory = db.query(models.Inventory).filter(models.Inventory.product_id == product.id).first()
+                if not inventory:
+                    inventory = models.Inventory(product_id=product.id, quantity=100, low_stock_threshold=10)
+                    db.add(inventory)
+                    db.add(models.InventoryMovement(
+                        product_id=product.id,
+                        quantity_delta=100,
+                        reason="Fake data seed",
+                        reference_type="seed",
+                        reference_id=sku,
+                    ))
+                    created_inventory += 1
+
+                if not db.query(models.Cart).filter(models.Cart.user_id == user.id).first():
+                    db.add(models.Cart(user_id=user.id))
+                    created_carts += 1
+
+            db.commit()
+
+        print(
+            "✅ Seed complete: "
+            f"{created_users} users, {created_products} products, "
+            f"{created_inventory} inventory records, {created_carts} carts created."
+        )
+        print("🔐 Seed user password: TestPassword123!")
+        return True
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -366,6 +482,19 @@ def show_help():
     print(__doc__)
 
 
+def requested_seed_count() -> int:
+    args = sys.argv[2:]
+    if not args:
+        return 100
+    if len(args) == 1 and not args[0].startswith("--"):
+        return int(args[0])
+    if len(args) == 2 and args[0] == "--count":
+        return int(args[1])
+    if len(args) == 1 and args[0].startswith("--count="):
+        return int(args[0].split("=", 1)[1])
+    raise ValueError("Usage: python manage.py seed_fake --count 1000")
+
+
 def main():
     if len(sys.argv) < 2:
         show_help()
@@ -380,6 +509,7 @@ def main():
         'createsuperuser': createsuperuser,
         'createuser': createuser,
         'seed': seed,
+        'seed_fake': lambda: seed_fake(requested_seed_count()),
         'shell': shell,
         'dbshell': dbshell,
         'reset_db': reset_db,
