@@ -147,7 +147,10 @@ class Cart(Base):
 
 class CartItem(Base):
     __tablename__ = "cart_items"
-    __table_args__ = (UniqueConstraint("cart_id", "product_id", name="uq_cart_product"),)
+    __table_args__ = (
+        UniqueConstraint("cart_id", "product_id", name="uq_cart_product"),
+        CheckConstraint("quantity > 0", name="ck_cart_items_positive_quantity"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     cart_id = Column(Integer, ForeignKey("carts.id"), nullable=False)
@@ -192,6 +195,7 @@ class Order(Base):
     currency = Column(String(3), nullable=False, default="INR")
     total = Column(Numeric(12, 2), nullable=False)
     idempotency_key = Column(String(128), nullable=False)
+    idempotency_request_hash = Column(String(64), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     items = relationship("OrderItem", cascade="all, delete-orphan", back_populates="order")
@@ -200,6 +204,7 @@ class Order(Base):
 
 class OrderItem(Base):
     __tablename__ = "order_items"
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_order_items_positive_quantity"),)
 
     id = Column(Integer, primary_key=True, index=True)
     order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
