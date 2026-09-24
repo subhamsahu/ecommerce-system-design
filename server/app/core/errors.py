@@ -15,7 +15,7 @@ def problem_response(
     errors: list[dict[str, Any]] | None = None,
 ) -> JSONResponse:
     payload: dict[str, Any] = {
-        "type": f"https://ecommerce.local/problems/{code.lower().replace("_", "-")}",
+        "type": f"https://ecommerce.local/problems/{code.lower().replace('_', '-')}",
         "title": title,
         "status": status_code,
         "detail": detail,
