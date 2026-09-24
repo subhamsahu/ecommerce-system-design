@@ -24,12 +24,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 import subprocess
 import getpass
 from sqlalchemy import select
-from sqlmodel import Session
-from app.core.database import Base, engine, ensure_sqlite_compatibility
+from sqlalchemy.orm import Session
+from app.core.database import Base, engine
 from app.models import User, UserRole, RolePermissions, DEFAULT_ROLE_PERMISSIONS
 from app.auth import hash_password
 
-ensure_sqlite_compatibility()
 
 
 def makemigrations(message: str = "auto migration"):
