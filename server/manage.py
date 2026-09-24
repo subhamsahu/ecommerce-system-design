@@ -106,7 +106,7 @@ def createsuperuser():
                 continue
             
             # Check if user exists
-            existing = db.exec(select(User).where(User.username == username)).first()
+            existing = db.execute(select(User).where(User.username == username)).scalars().first()
             if existing:
                 print(f"❌ User '{username}' already exists")
                 continue
@@ -162,7 +162,7 @@ def createuser():
                 continue
             
             # Check if user exists
-            existing = db.exec(select(User).where(User.username == username)).first()
+            existing = db.execute(select(User).where(User.username == username)).scalars().first()
             if existing:
                 print(f"❌ User '{username}' already exists")
                 continue
@@ -231,7 +231,7 @@ def seed():
         # Seed role permissions
         for role_name, perms in DEFAULT_ROLE_PERMISSIONS.items():
             role_enum = UserRole[role_name]
-            existing = db.exec(select(RolePermissions).where(RolePermissions.role == role_enum)).first()
+            existing = db.execute(select(RolePermissions).where(RolePermissions.role == role_enum)).scalars().first()
             
             if existing:
                 print(f"ℹ️  Role permissions for '{role_name}' already exist, skipping...")
