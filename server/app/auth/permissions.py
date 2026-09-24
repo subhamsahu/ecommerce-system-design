@@ -8,7 +8,7 @@ from app import models
 from app.auth import get_current_user, require_admin
 from app.core.database import get_db
 
-router = APIRouter(prefix="/permissions", tags=["Permissions"])
+router = APIRouter(prefix="/api/v1/permissions", tags=["Permissions"])
 
 
 class PermissionsUpdateRequest(BaseModel):
