@@ -11,6 +11,17 @@ router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
 
 @router.post("/register", response_model=UserResponse, status_code=201)
 def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    """Register a customer account.
+
+    Args:
+        user_in: Username, email, name, and password for the new account.
+
+    Returns:
+        The created user profile.
+
+    Raises:
+        HTTPException: 409 if the username or email is already registered; 422 for invalid input.
+    """
     username = user_in.username.strip().lower()
     email = user_in.email.strip().lower()
     if db.query(models.User).filter(models.User.username == username).first():
@@ -32,6 +43,17 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
 
 @router.post("/login", response_model=Token)
 def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+    """Authenticate a user and issue a bearer access token.
+
+    Args:
+        login_data: Username and password credentials.
+
+    Returns:
+        An access token, token type, and user profile.
+
+    Raises:
+        HTTPException: 401 if the credentials are incorrect or the account is inactive; 422 for invalid input.
+    """
     username = login_data.username.strip().lower()
     user = db.query(models.User).filter(models.User.username == username).first()
     if not user or not user.is_active or not verify_password(login_data.password, user.hashed_password):

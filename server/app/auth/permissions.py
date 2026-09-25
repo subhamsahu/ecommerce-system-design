@@ -29,6 +29,14 @@ def get_all_permissions(
     db: Session = Depends(get_db),
     _: models.User = Depends(get_current_user),
 ):
+    """Return the permission map for every role.
+
+    Returns:
+        A mapping from role names to permission-name/allowed-value mappings.
+
+    Raises:
+        HTTPException: 401 if the bearer token is missing or invalid.
+    """
     _ensure_seeded(db)
     rows = db.query(models.RolePermissions).all()
     return {row.role.value: row.permissions for row in rows}
@@ -41,6 +49,18 @@ def update_role_permissions(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
+    """Replace the permission map for a non-administrator role.
+
+    Args:
+        role: Role name whose permissions are being replaced.
+        body: Complete permission-name/allowed-value mapping.
+
+    Returns:
+        The updated permission map for the role.
+
+    Raises:
+        HTTPException: 400 if the administrator role is targeted, 401 if unauthenticated, 403 if not an administrator, 404 if the role or its permission record does not exist, or 422 for invalid input.
+    """
     if role == "admin":
         raise HTTPException(status_code=400, detail="Admin permissions cannot be changed")
 

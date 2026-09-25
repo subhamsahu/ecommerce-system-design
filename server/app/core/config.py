@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     app_env: str = Field(default="development", validation_alias="APP_ENV")
     app_name: str = Field(default="ecommerce-system-design", validation_alias="APP_NAME")
+    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
     api_v1_prefix: str = Field(default="/api/v1", validation_alias="API_V1_PREFIX")
     database_url: str = Field(
         default="postgresql+psycopg2://labadmin:root123@localhost:5432/ecommerce",

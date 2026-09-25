@@ -15,12 +15,27 @@ router = APIRouter(prefix="/api/v1", tags=["Catalog"])
 
 @router.get("/categories", response_model=list[CategoryResponse])
 def list_categories(db: Session = Depends(get_db)):
+    """List active product categories alphabetically.
+
+    Returns:
+        Active categories, or an empty list if none are available.
+
+    Raises:
+        HTTPException: 422 if request validation fails.
+    """
     return db.query(models.Category).filter(models.Category.is_active.is_(True)).order_by(models.Category.name).all()
 
 
 @router.get("/admin/dashboard")
 def admin_dashboard(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
-    """Small Phase 0 operational summary for the admin panel."""
+    """Return operational counts for the administrator dashboard.
+
+    Returns:
+        Counts of products, low-stock inventory records, orders, and customers.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 403 if not an administrator.
+    """
     low_stock = db.query(func.count(models.Inventory.id)).filter(
         models.Inventory.quantity <= models.Inventory.low_stock_threshold
     ).scalar()
@@ -36,6 +51,17 @@ def admin_dashboard(db: Session = Depends(get_db), _: models.User = Depends(requ
 
 @router.post("/admin/categories", response_model=CategoryResponse, status_code=201)
 def create_category(body: CategoryCreate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    """Create a product category as an administrator.
+
+    Args:
+        body: Category name and optional description.
+
+    Returns:
+        The created category, including its generated slug.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, 409 if the name or slug already exists, or 422 for invalid input.
+    """
     category = models.Category(name=body.name.strip(), slug=slugify(body.name), description=body.description)
     db.add(category)
     try:
@@ -49,11 +75,31 @@ def create_category(body: CategoryCreate, db: Session = Depends(get_db), _: mode
 
 @router.get("/admin/categories", response_model=list[CategoryResponse])
 def admin_categories(db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    """List all categories, including inactive categories.
+
+    Returns:
+        All categories in alphabetical order.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 403 if not an administrator.
+    """
     return db.query(models.Category).order_by(models.Category.name).all()
 
 
 @router.patch("/admin/categories/{category_id}", response_model=CategoryResponse)
 def update_category(category_id: int, body: CategoryUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    """Update a category's name, description, or active state.
+
+    Args:
+        category_id: ID of the category to update.
+        body: Fields to change; omitted fields remain unchanged.
+
+    Returns:
+        The updated category.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, 404 if the category does not exist, 409 if the name or slug conflicts, or 422 for invalid input.
+    """
     category = db.get(models.Category, category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -86,9 +132,25 @@ def list_products(
     min_price: float | None = Query(default=None, ge=0),
     max_price: float | None = Query(default=None, ge=0),
     page: int = Query(default=1, ge=1),
-    page_size: int = Query(default=20, ge=1, le=100),
+    page_size: int = Query(default=20, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
+    """Search and paginate published, non-archived products.
+
+    Args:
+        search: Optional case-insensitive substring matched against product name or SKU.
+        category_id: Optional category ID filter.
+        min_price: Optional inclusive minimum price; must be non-negative.
+        max_price: Optional inclusive maximum price; must be non-negative.
+        page: One-based page number (default 1).
+        page_size: Number of products per page (default 20, maximum 200).
+
+    Returns:
+        A page of products with available inventory quantities and pagination metadata.
+
+    Raises:
+        HTTPException: 422 if a query parameter is invalid.
+    """
     query = db.query(models.Product).filter(models.Product.is_published.is_(True), models.Product.is_archived.is_(False))
     if search:
         term = f"%{search.strip()}%"
@@ -109,6 +171,17 @@ def list_products(
 
 @router.get("/products/{product_id}", response_model=ProductListResponse)
 def get_product(product_id: int, db: Session = Depends(get_db)):
+    """Get one published, non-archived product.
+
+    Args:
+        product_id: ID of the product to retrieve.
+
+    Returns:
+        The product and its available inventory quantity.
+
+    Raises:
+        HTTPException: 404 if the product does not exist or is not publicly available; 422 if the ID is invalid.
+    """
     product = db.query(models.Product).filter(models.Product.id == product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False)).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -122,6 +195,18 @@ def admin_products(
     db: Session = Depends(get_db),
     _: models.User = Depends(require_admin),
 ):
+    """List all products, including unpublished or archived products.
+
+    Args:
+        page: One-based page number (default 1).
+        page_size: Number of products per page (default 20, maximum 100).
+
+    Returns:
+        A page of products with available inventory quantities and pagination metadata.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, or 422 if a query parameter is invalid.
+    """
     query = db.query(models.Product)
     total = query.count()
     products = query.order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
@@ -133,6 +218,17 @@ def admin_products(
 
 @router.post("/admin/products", response_model=ProductResponse, status_code=201)
 def create_product(body: ProductCreate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    """Create a product and initialize its inventory to zero.
+
+    Args:
+        body: Product details, including SKU, price, currency, and optional category.
+
+    Returns:
+        The created product.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, 409 if the SKU already exists, or 422 if input is invalid or the category does not exist.
+    """
     product_data = body.model_dump()
     product_data["sku"] = body.sku.strip().upper()
     if body.category_id is not None and not db.get(models.Category, body.category_id):
@@ -152,6 +248,18 @@ def create_product(body: ProductCreate, db: Session = Depends(get_db), _: models
 
 @router.patch("/admin/products/{product_id}", response_model=ProductResponse)
 def update_product(product_id: int, body: ProductUpdate, db: Session = Depends(get_db), _: models.User = Depends(require_admin)):
+    """Update the supplied fields of an existing product.
+
+    Args:
+        product_id: ID of the product to update.
+        body: Product fields to change; omitted fields remain unchanged.
+
+    Returns:
+        The updated product.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, 404 if the product does not exist, 409 if the update conflicts with an existing record, or 422 if input is invalid or the category does not exist.
+    """
     product = db.get(models.Product, product_id)
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")

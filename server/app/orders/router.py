@@ -35,6 +35,18 @@ def create_order(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """Create an order from the authenticated user's cart.
+
+    Args:
+        body: Checkout address details.
+        idempotency_key: Required ``Idempotency-Key`` header, 8-128 characters; reuse safely retries the same checkout.
+
+    Returns:
+        The created order (201), or the existing order (200) for an identical idempotent retry.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 409 if the key is reused with different input or an item is no longer available, or 422 if the cart is empty or input is invalid.
+    """
     order, created = checkout(db, current_user, body, idempotency_key)
     if not created:
         response.status_code = status.HTTP_200_OK
@@ -52,6 +64,22 @@ def list_orders(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """List orders visible to the authenticated user, newest first.
+
+    Args:
+        status_filter: Optional order status filter (query parameter ``status``).
+        customer_id: Optional customer ID filter; applied for administrators only.
+        created_after: Include orders created at or after this timestamp.
+        created_before: Include orders created at or before this timestamp.
+        page: One-based page number (default 1).
+        page_size: Number of orders per page (default 20, maximum 100).
+
+    Returns:
+        A page of orders and pagination metadata. Non-administrators only see their own orders.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 422 if a query parameter is invalid.
+    """
     query = db.query(models.Order).options(joinedload(models.Order.items))
     if current_user.role != models.UserRole.admin:
         query = query.filter(models.Order.user_id == current_user.id)
@@ -73,6 +101,17 @@ def list_orders(
 
 @router.get("/{order_id}", response_model=OrderResponse)
 def get_order(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Get an order visible to the authenticated user.
+
+    Args:
+        order_id: ID of the order to retrieve.
+
+    Returns:
+        The order with its item snapshots.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the order does not exist or is not owned by the user, or 422 if the ID is invalid.
+    """
     query = db.query(models.Order).options(joinedload(models.Order.items)).filter(models.Order.id == order_id)
     if current_user.role != models.UserRole.admin:
         query = query.filter(models.Order.user_id == current_user.id)
@@ -84,7 +123,17 @@ def get_order(order_id: int, db: Session = Depends(get_db), current_user: models
 
 @router.post("/{order_id}/cancellation", response_model=OrderResponse)
 def cancellation(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    """Customer or administrator cancellation, including inventory and refund compensation."""
+    """Cancel an order and restore inventory, issuing a refund when applicable.
+
+    Args:
+        order_id: ID of the order to cancel.
+
+    Returns:
+        The cancelled order.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the order does not exist or is not owned by the user, 409 if the order cannot be cancelled or inventory is missing, or 422 if the ID is invalid.
+    """
     return _response(cancel_order(db, order_id, current_user))
 
 
@@ -95,6 +144,18 @@ def change_order_status(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_admin),
 ):
+    """Advance an order through an allowed fulfillment status transition.
+
+    Args:
+        order_id: ID of the order to update.
+        body: Target order status. Cancellation must use the cancellation endpoint.
+
+    Returns:
+        The order with its updated status.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 403 if not an administrator, 404 if the order does not exist, 409 if the transition is not allowed, or 422 for an unknown status or invalid input.
+    """
     try:
         new_status = models.OrderStatus(body.status)
     except ValueError as exc:

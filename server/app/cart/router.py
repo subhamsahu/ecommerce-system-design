@@ -33,11 +33,30 @@ def _response(cart: models.Cart) -> CartResponse:
 
 @router.get("", response_model=CartResponse)
 def get_cart(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Get the authenticated user's cart, creating an empty cart if needed.
+
+    Returns:
+        The cart, its items, and the calculated total.
+
+    Raises:
+        HTTPException: 401 if the bearer token is missing or invalid.
+    """
     return _response(_get_cart(db, current_user.id))
 
 
 @router.post("/items", response_model=CartResponse)
 def add_item(body: CartItemInput, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Add a product quantity to the authenticated user's cart.
+
+    Args:
+        body: Product ID and quantity to add.
+
+    Returns:
+        The updated cart and its calculated total.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the product is unavailable, 409 if stock is insufficient, or 422 if the input is invalid or the cart item limit would be exceeded.
+    """
     product = db.query(models.Product).options(joinedload(models.Product.inventory)).filter(models.Product.id == body.product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False)).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
@@ -62,6 +81,18 @@ def add_item(body: CartItemInput, db: Session = Depends(get_db), current_user: m
 
 @router.patch("/items/{item_id}", response_model=CartResponse)
 def update_item(item_id: int, body: CartItemUpdate, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Set the quantity of an item in the authenticated user's cart.
+
+    Args:
+        item_id: ID of the cart item to update.
+        body: New item quantity.
+
+    Returns:
+        The updated cart and its calculated total.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the cart item is not owned by the user or does not exist, 409 if stock is insufficient, or 422 for invalid input.
+    """
     item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
@@ -75,6 +106,17 @@ def update_item(item_id: int, body: CartItemUpdate, db: Session = Depends(get_db
 
 @router.delete("/items/{item_id}", response_model=CartResponse)
 def remove_item(item_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """Remove an item from the authenticated user's cart.
+
+    Args:
+        item_id: ID of the cart item to remove.
+
+    Returns:
+        The updated cart and its calculated total.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 404 if the cart item is not owned by the user or does not exist.
+    """
     item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")

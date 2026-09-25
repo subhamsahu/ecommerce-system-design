@@ -19,6 +19,19 @@ def create_payment_attempt(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    """Simulate a payment attempt for an order.
+
+    Args:
+        order_id: ID of the order to pay for.
+        body: Simulated outcome (success, failure, or timeout).
+        idempotency_key: Required ``Idempotency-Key`` header, 8-128 characters; reuse safely retries the same outcome.
+
+    Returns:
+        The payment attempt (201), or the existing attempt (200) for an identical idempotent retry.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the order does not exist or is not owned by the user, 409 if the key conflicts or the order is not awaiting payment, or 422 for invalid input.
+    """
     payment, created = attempt_payment(db, order_id, current_user, body.outcome, idempotency_key)
     if not created:
         response.status_code = status.HTTP_200_OK
@@ -27,6 +40,17 @@ def create_payment_attempt(
 
 @router.get("/{order_id}", response_model=list[PaymentResponse])
 def list_payments(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """List payment attempts for an order visible to the authenticated user.
+
+    Args:
+        order_id: ID of the order whose payment attempts are requested.
+
+    Returns:
+        Payment attempts ordered from oldest to newest; an empty list if none are found.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 422 if the order ID is invalid.
+    """
     query = db.query(models.Payment).join(models.Order).filter(models.Payment.order_id == order_id)
     if current_user.role != models.UserRole.admin:
         query = query.filter(models.Order.user_id == current_user.id)

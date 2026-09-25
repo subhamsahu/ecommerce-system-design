@@ -1,7 +1,7 @@
 {
   "info": {
     "_postman_id": "3b9b4f9b-7b7e-4e2c-8d2f-4e5a6b7c8d9e",
-    "name": "E-commerce System Design API",
+    "name": "e-commerce-system-design",
     "description": "Postman collection for the FastAPI server. Start the server on http://localhost:8000, run Login, then use the protected requests with the captured JWT.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
@@ -45,10 +45,10 @@
   ],
   "item": [
     {
-      "name": "Health",
+      "name": "health",
       "item": [
         {
-          "name": "Root",
+          "name": "root",
           "request": {
             "method": "GET",
             "header": [],
@@ -56,7 +56,7 @@
           }
         },
         {
-          "name": "Health check",
+          "name": "health check",
           "request": {
             "method": "GET",
             "header": [],
@@ -66,10 +66,10 @@
       ]
     },
     {
-      "name": "Authentication",
+      "name": "auth",
       "item": [
         {
-          "name": "Register customer",
+          "name": "register",
           "request": {
             "method": "POST",
             "header": [
@@ -86,7 +86,7 @@
           }
         },
         {
-          "name": "Login",
+          "name": "login",
           "event": [
             {
               "listen": "test",
@@ -118,10 +118,10 @@
       ]
     },
     {
-      "name": "Catalog",
+      "name": "catalog",
       "item": [
         {
-          "name": "List categories",
+          "name": "list categories",
           "request": {
             "method": "GET",
             "header": [],
@@ -129,7 +129,7 @@
           }
         },
         {
-          "name": "List published products",
+          "name": "list published products",
           "request": {
             "method": "GET",
             "header": [],
@@ -149,7 +149,7 @@
           }
         },
         {
-          "name": "Get published product",
+          "name": "get published product",
           "request": {
             "method": "GET",
             "header": [],
@@ -159,10 +159,10 @@
       ]
     },
     {
-      "name": "Admin - Catalog",
+      "name": "admin - catalog",
       "item": [
         {
-          "name": "Get dashboard",
+          "name": "get dashboard",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -170,7 +170,7 @@
           }
         },
         {
-          "name": "Create category",
+          "name": "create category",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('categoryId', response.id);"]}}],
           "request": {
             "method": "POST",
@@ -183,7 +183,7 @@
           }
         },
         {
-          "name": "List all categories",
+          "name": "list all categories",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -191,7 +191,7 @@
           }
         },
         {
-          "name": "Update category",
+          "name": "update category",
           "request": {
             "method": "PATCH",
             "header": [
@@ -203,7 +203,7 @@
           }
         },
         {
-          "name": "List all products",
+          "name": "list all products",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -211,7 +211,7 @@
           }
         },
         {
-          "name": "Create product",
+          "name": "create product",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('productId', response.id);"]}}],
           "request": {
             "method": "POST",
@@ -224,7 +224,7 @@
           }
         },
         {
-          "name": "Update product and publish",
+          "name": "update product and publish",
           "request": {
             "method": "PATCH",
             "header": [
@@ -238,10 +238,10 @@
       ]
     },
     {
-      "name": "Admin - Inventory",
+      "name": "admin - inventory",
       "item": [
         {
-          "name": "Adjust inventory",
+          "name": "adjust inventory",
           "request": {
             "method": "POST",
             "header": [
@@ -253,7 +253,7 @@
           }
         },
         {
-          "name": "List low-stock products",
+          "name": "list low-stock products",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -261,7 +261,7 @@
           }
         },
         {
-          "name": "List inventory movements",
+          "name": "list inventory movements",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -271,10 +271,10 @@
       ]
     },
     {
-      "name": "Users",
+      "name": "users",
       "item": [
         {
-          "name": "Get my profile",
+          "name": "get my profile",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -282,7 +282,7 @@
           }
         },
         {
-          "name": "Update my profile",
+          "name": "update my profile",
           "request": {
             "method": "PATCH",
             "header": [
@@ -294,7 +294,7 @@
           }
         },
         {
-          "name": "List users (admin)",
+          "name": "list users (admin)",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -302,7 +302,7 @@
           }
         },
         {
-          "name": "Create user (admin)",
+          "name": "create user (admin)",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('userId', response.id);"]}}],
           "request": {
             "method": "POST",
@@ -315,7 +315,7 @@
           }
         },
         {
-          "name": "Update user (admin)",
+          "name": "update user (admin)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -329,10 +329,10 @@
       ]
     },
     {
-      "name": "Permissions",
+      "name": "permissions",
       "item": [
         {
-          "name": "Get role permissions",
+          "name": "get role permissions",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -340,7 +340,7 @@
           }
         },
         {
-          "name": "Update role permissions",
+          "name": "update role permissions",
           "request": {
             "method": "PUT",
             "header": [
@@ -354,10 +354,10 @@
       ]
     },
     {
-      "name": "Cart",
+      "name": "cart",
       "item": [
         {
-          "name": "Get cart",
+          "name": "get cart",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -365,7 +365,7 @@
           }
         },
         {
-          "name": "Add item to cart",
+          "name": "add item to cart",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.items && response.items.length) pm.collectionVariables.set('cartItemId', response.items[response.items.length - 1].id);"]}}],
           "request": {
             "method": "POST",
@@ -378,7 +378,7 @@
           }
         },
         {
-          "name": "Update cart item",
+          "name": "update cart item",
           "request": {
             "method": "PATCH",
             "header": [
@@ -390,7 +390,7 @@
           }
         },
         {
-          "name": "Remove cart item",
+          "name": "remove cart item",
           "request": {
             "method": "DELETE",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -400,10 +400,10 @@
       ]
     },
     {
-      "name": "Orders",
+      "name": "orders",
       "item": [
         {
-          "name": "Create order",
+          "name": "create order",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('orderId', response.id);"]}}],
           "request": {
             "method": "POST",
@@ -417,7 +417,7 @@
           }
         },
         {
-          "name": "List orders",
+          "name": "list orders",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -425,7 +425,7 @@
           }
         },
         {
-          "name": "Get order",
+          "name": "get order",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -433,7 +433,7 @@
           }
         },
         {
-          "name": "Cancel order",
+          "name": "cancel order",
           "request": {
             "method": "POST",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
@@ -441,7 +441,7 @@
           }
         },
         {
-          "name": "Update order status (admin)",
+          "name": "update order status (admin)",
           "request": {
             "method": "PATCH",
             "header": [
@@ -455,10 +455,10 @@
       ]
     },
     {
-      "name": "Payments",
+      "name": "payments",
       "item": [
         {
-          "name": "Attempt payment",
+          "name": "attempt payment",
           "event": [{"listen": "test", "script": {"type": "text/javascript", "exec": ["const response = pm.response.json();", "if (response.id) pm.collectionVariables.set('paymentId', response.id);"]}}],
           "request": {
             "method": "POST",
@@ -472,7 +472,7 @@
           }
         },
         {
-          "name": "List payments for order",
+          "name": "list payments for order",
           "request": {
             "method": "GET",
             "header": [{"key": "Authorization", "value": "Bearer {{accessToken}}"}],
