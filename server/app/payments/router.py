@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Header, Response, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import get_current_user
@@ -51,7 +51,7 @@ def list_payments(order_id: int, db: Session = Depends(get_db), current_user: mo
     Raises:
         HTTPException: 401 if unauthenticated or 422 if the order ID is invalid.
     """
-    query = db.query(models.Payment).join(models.Order).filter(models.Payment.order_id == order_id)
+    query = select(models.Payment).join(models.Order).where(models.Payment.order_id == order_id)
     if current_user.role != models.UserRole.admin:
-        query = query.filter(models.Order.user_id == current_user.id)
-    return query.order_by(models.Payment.created_at).all()
+        query = query.where(models.Order.user_id == current_user.id)
+    return db.exec(query.order_by(models.Payment.created_at)).all()

@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy import func
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import require_admin
 from app.core.database import get_db
 from app.core.schemas import Page
+from app.core.utils import utc_now
 from app.inventory.schemas import InventoryAdjustment, InventoryMovementResponse, InventoryResponse
 
 router = APIRouter(prefix="/api/v1/admin/inventory", tags=["Inventory"])
@@ -23,13 +25,14 @@ def adjust_inventory(body: InventoryAdjustment, db: Session = Depends(get_db), c
     Raises:
         HTTPException: 401 if unauthenticated, 403 if not an administrator, 404 if inventory is missing, 409 if the adjustment would make stock negative, or 422 for invalid input.
     """
-    inventory = db.query(models.Inventory).filter(models.Inventory.product_id == body.product_id).with_for_update().first()
+    inventory = db.exec(select(models.Inventory).where(models.Inventory.product_id == body.product_id).with_for_update()).first()
     if not inventory:
         raise HTTPException(status_code=404, detail="Inventory record not found")
     next_quantity = inventory.quantity + body.quantity_delta
     if next_quantity < 0:
         raise HTTPException(status_code=409, detail="Inventory cannot become negative")
     inventory.quantity = next_quantity
+    inventory.updated_at = utc_now()
     db.add(models.InventoryMovement(product_id=body.product_id, quantity_delta=body.quantity_delta, reason=body.reason, created_by=current_user.id))
     db.commit()
     db.refresh(inventory)
@@ -46,7 +49,7 @@ def low_stock(db: Session = Depends(get_db), _: models.User = Depends(require_ad
     Raises:
         HTTPException: 401 if unauthenticated or 403 if not an administrator.
     """
-    rows = db.query(models.Inventory).filter(models.Inventory.quantity <= models.Inventory.low_stock_threshold).all()
+    rows = db.exec(select(models.Inventory).where(models.Inventory.quantity <= models.Inventory.low_stock_threshold)).all()
     return [{"product_id": row.product_id, "quantity": row.quantity, "low_stock_threshold": row.low_stock_threshold} for row in rows]
 
 
@@ -71,11 +74,11 @@ def list_movements(
     Raises:
         HTTPException: 401 if unauthenticated, 403 if not an administrator, or 422 if a query parameter is invalid.
     """
-    query = db.query(models.InventoryMovement)
+    query = select(models.InventoryMovement)
     if product_id is not None:
-        query = query.filter(models.InventoryMovement.product_id == product_id)
-    total = query.count()
-    rows = query.order_by(models.InventoryMovement.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        query = query.where(models.InventoryMovement.product_id == product_id)
+    total = db.exec(select(func.count()).select_from(query.subquery())).one()
+    rows = db.exec(query.order_by(models.InventoryMovement.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
     return {
         "items": rows,
         "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},

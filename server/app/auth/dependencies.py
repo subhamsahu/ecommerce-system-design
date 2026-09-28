@@ -5,7 +5,7 @@ import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.core.config import get_settings
@@ -45,7 +45,7 @@ def get_current_user(
         username = payload.get("sub")
     except JWTError as exc:
         raise error from exc
-    user = db.query(models.User).filter(models.User.username == username, models.User.is_active.is_(True)).first()
+    user = db.exec(select(models.User).where(models.User.username == username, models.User.is_active.is_(True))).first()
     if user is None:
         raise error
     return user

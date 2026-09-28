@@ -6,11 +6,11 @@ from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 
 from alembic import context
+from sqlmodel import SQLModel
 
 # Make sure the app package is importable
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from app.core.database import Base     # noqa: E402
 from app import models                 # noqa: E402, F401  – registers all models
 from app.core.config import get_settings  # noqa: E402
 
@@ -27,7 +27,7 @@ config.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = SQLModel.metadata
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:

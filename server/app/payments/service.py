@@ -4,9 +4,10 @@ import hashlib
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
+from app.core.utils import utc_now
 
 
 OUTCOMES = {
@@ -28,14 +29,14 @@ def attempt_payment(
     idempotency_key: str,
 ) -> tuple[models.Payment, bool]:
     payment_fingerprint = fingerprint(outcome)
-    order = db.query(models.Order).filter(models.Order.id == order_id).with_for_update().first()
+    order = db.exec(select(models.Order).where(models.Order.id == order_id).with_for_update()).first()
     if not order or (actor.role != models.UserRole.admin and order.user_id != actor.id):
         raise HTTPException(status_code=404, detail="Order not found")
 
-    existing = db.query(models.Payment).filter(
+    existing = db.exec(select(models.Payment).where(
         models.Payment.order_id == order_id,
         models.Payment.idempotency_key == idempotency_key,
-    ).first()
+    )).first()
     if existing:
         if existing.request_fingerprint != payment_fingerprint:
             raise HTTPException(status_code=409, detail="Idempotency-Key was already used with a different request")
@@ -59,6 +60,7 @@ def attempt_payment(
         if payment_status == models.PaymentStatus.succeeded:
             old_status = order.status.value
             order.status = models.OrderStatus.paid
+            order.updated_at = utc_now()
             db.add(models.OrderStatusHistory(
                 order_id=order.id,
                 from_status=old_status,
@@ -68,10 +70,10 @@ def attempt_payment(
         db.commit()
     except IntegrityError as exc:
         db.rollback()
-        concurrent = db.query(models.Payment).filter(
+        concurrent = db.exec(select(models.Payment).where(
             models.Payment.order_id == order_id,
             models.Payment.idempotency_key == idempotency_key,
-        ).first()
+        )).first()
         if concurrent:
             if concurrent.request_fingerprint != payment_fingerprint:
                 raise HTTPException(status_code=409, detail="Idempotency-Key was already used with a different request") from exc

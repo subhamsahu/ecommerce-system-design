@@ -7,19 +7,19 @@ os.environ["JWT_SECRET"] = "test-secret-not-for-production"
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session
+from sqlmodel import SQLModel, Session, select
 
 from app import models
-from app.core.database import Base, engine
+from app.core.database import engine
 from app.main import app
 
 
 @pytest.fixture(autouse=True)
 def schema():
-    Base.metadata.drop_all(engine)
-    Base.metadata.create_all(engine)
+    SQLModel.metadata.drop_all(engine)
+    SQLModel.metadata.create_all(engine)
     yield
-    Base.metadata.drop_all(engine)
+    SQLModel.metadata.drop_all(engine)
 
 
 def register(client: TestClient, username: str, email: str) -> str:
@@ -38,7 +38,7 @@ def register(client: TestClient, username: str, email: str) -> str:
 def setup_order(client: TestClient):
     admin_token = register(client, "admin", "admin@example.test")
     with Session(engine) as db:
-        admin = db.query(models.User).filter(models.User.username == "admin").one()
+        admin = db.exec(select(models.User).where(models.User.username == "admin")).one()
         admin.role = models.UserRole.admin
         db.commit()
     admin_headers = {"Authorization": f"Bearer {admin_token}"}
@@ -66,7 +66,7 @@ def test_cancelled_order_cannot_be_paid_and_stock_is_restored():
     payment = client.post(f"/api/v1/payments/{order_id}/attempt", headers={**customer_headers, "Idempotency-Key": "payment-key-1"}, json={"outcome": "success"})
     assert payment.status_code == 409
     with Session(engine) as db:
-        assert db.query(models.Inventory).filter(models.Inventory.product_id == product_id).one().quantity == 3
+        assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3
 
 
 def test_checkout_idempotency_rejects_a_different_request_body():
@@ -91,4 +91,4 @@ def test_one_successful_payment_and_admin_cancellation_refunds_once():
     payments = client.get(f"/api/v1/payments/{order_id}", headers=admin_headers).json()
     assert any(row["status"] == "refunded" for row in payments)
     with Session(engine) as db:
-        assert db.query(models.Inventory).filter(models.Inventory.product_id == product_id).one().quantity == 3
+        assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3

@@ -1,7 +1,9 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response, status
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func
+from sqlalchemy.orm import joinedload
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import get_current_user, require_admin
@@ -80,19 +82,20 @@ def list_orders(
     Raises:
         HTTPException: 401 if unauthenticated or 422 if a query parameter is invalid.
     """
-    query = db.query(models.Order).options(joinedload(models.Order.items))
+    query = select(models.Order).options(joinedload(models.Order.items))
+    filters = []
     if current_user.role != models.UserRole.admin:
-        query = query.filter(models.Order.user_id == current_user.id)
+        filters.append(models.Order.user_id == current_user.id)
     elif customer_id is not None:
-        query = query.filter(models.Order.user_id == customer_id)
+        filters.append(models.Order.user_id == customer_id)
     if status_filter is not None:
-        query = query.filter(models.Order.status == status_filter)
+        filters.append(models.Order.status == status_filter)
     if created_after is not None:
-        query = query.filter(models.Order.created_at >= created_after)
+        filters.append(models.Order.created_at >= created_after)
     if created_before is not None:
-        query = query.filter(models.Order.created_at <= created_before)
-    total = query.order_by(None).count()
-    rows = query.order_by(models.Order.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        filters.append(models.Order.created_at <= created_before)
+    total = db.exec(select(func.count(models.Order.id)).where(*filters)).one()
+    rows = db.exec(query.where(*filters).order_by(models.Order.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).unique().all()
     return {
         "items": [_response(order) for order in rows],
         "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
@@ -112,10 +115,10 @@ def get_order(order_id: int, db: Session = Depends(get_db), current_user: models
     Raises:
         HTTPException: 401 if unauthenticated, 404 if the order does not exist or is not owned by the user, or 422 if the ID is invalid.
     """
-    query = db.query(models.Order).options(joinedload(models.Order.items)).filter(models.Order.id == order_id)
+    query = select(models.Order).options(joinedload(models.Order.items)).where(models.Order.id == order_id)
     if current_user.role != models.UserRole.admin:
-        query = query.filter(models.Order.user_id == current_user.id)
-    order = query.first()
+        query = query.where(models.Order.user_id == current_user.id)
+    order = db.exec(query).unique().first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     return _response(order)

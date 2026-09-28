@@ -1,24 +1,33 @@
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import get_current_user
 from app.cart.schemas import CartItemInput, CartItemUpdate, CartResponse
 from app.core.database import get_db
+from app.core.utils import utc_now
 
 router = APIRouter(prefix="/api/v1/cart", tags=["Cart"])
 
 
 def _get_cart(db: Session, user_id: int) -> models.Cart:
-    cart = db.query(models.Cart).options(joinedload(models.Cart.items).joinedload(models.CartItem.product).joinedload(models.Product.inventory)).filter(models.Cart.user_id == user_id).first()
+    statement = select(models.Cart).options(joinedload(models.Cart.items).joinedload(models.CartItem.product).joinedload(models.Product.inventory)).where(models.Cart.user_id == user_id)
+    cart = db.exec(statement).unique().first()
     if not cart:
         cart = models.Cart(user_id=user_id)
         db.add(cart)
         db.commit()
         db.refresh(cart)
     return cart
+
+
+def _touch_cart(db: Session, cart_id: int) -> None:
+    cart = db.get(models.Cart, cart_id)
+    if cart:
+        cart.updated_at = utc_now()
 
 
 def _response(cart: models.Cart) -> CartResponse:
@@ -57,7 +66,7 @@ def add_item(body: CartItemInput, db: Session = Depends(get_db), current_user: m
     Raises:
         HTTPException: 401 if unauthenticated, 404 if the product is unavailable, 409 if stock is insufficient, or 422 if the input is invalid or the cart item limit would be exceeded.
     """
-    product = db.query(models.Product).options(joinedload(models.Product.inventory)).filter(models.Product.id == body.product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False)).first()
+    product = db.exec(select(models.Product).options(joinedload(models.Product.inventory)).where(models.Product.id == body.product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False))).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     if not product.inventory:
@@ -75,6 +84,7 @@ def add_item(body: CartItemInput, db: Session = Depends(get_db), current_user: m
         if product.inventory.quantity < body.quantity:
             raise HTTPException(status_code=409, detail="Insufficient inventory")
         cart.items.append(models.CartItem(product_id=body.product_id, quantity=body.quantity))
+    cart.updated_at = utc_now()
     db.commit()
     return _response(_get_cart(db, current_user.id))
 
@@ -93,13 +103,14 @@ def update_item(item_id: int, body: CartItemUpdate, db: Session = Depends(get_db
     Raises:
         HTTPException: 401 if unauthenticated, 404 if the cart item is not owned by the user or does not exist, 409 if stock is insufficient, or 422 for invalid input.
     """
-    item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
+    item = db.exec(select(models.CartItem).join(models.Cart).where(models.CartItem.id == item_id, models.Cart.user_id == current_user.id)).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
-    inventory = db.query(models.Inventory).filter(models.Inventory.product_id == item.product_id).first()
+    inventory = db.exec(select(models.Inventory).where(models.Inventory.product_id == item.product_id)).first()
     if not inventory or inventory.quantity < body.quantity:
         raise HTTPException(status_code=409, detail="Insufficient inventory")
     item.quantity = body.quantity
+    _touch_cart(db, item.cart_id)
     db.commit()
     return _response(_get_cart(db, current_user.id))
 
@@ -117,9 +128,11 @@ def remove_item(item_id: int, db: Session = Depends(get_db), current_user: model
     Raises:
         HTTPException: 401 if unauthenticated or 404 if the cart item is not owned by the user or does not exist.
     """
-    item = db.query(models.CartItem).join(models.Cart).filter(models.CartItem.id == item_id, models.Cart.user_id == current_user.id).first()
+    item = db.exec(select(models.CartItem).join(models.Cart).where(models.CartItem.id == item_id, models.Cart.user_id == current_user.id)).first()
     if not item:
         raise HTTPException(status_code=404, detail="Cart item not found")
+    cart_id = item.cart_id
     db.delete(item)
+    _touch_cart(db, cart_id)
     db.commit()
     return _response(_get_cart(db, current_user.id))

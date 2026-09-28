@@ -1,23 +1,12 @@
+from datetime import datetime
 from decimal import Decimal
 import enum
+from typing import Optional
 
-from sqlalchemy import (
-    Boolean,
-    CheckConstraint,
-    Column,
-    DateTime,
-    Enum as SAEnum,
-    ForeignKey,
-    Integer,
-    JSON,
-    Numeric,
-    String,
-    Text,
-    UniqueConstraint,
-)
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
-from app.core.database import Base
+from sqlalchemy import CheckConstraint, DateTime, Enum as SAEnum, JSON, Numeric, Text, UniqueConstraint
+from sqlmodel import Field, Relationship, SQLModel
+
+from app.core.utils import utc_now
 
 
 class UserRole(str, enum.Enum):
@@ -27,17 +16,17 @@ class UserRole(str, enum.Enum):
     employee = "employee"
 
 
-class User(Base):
+class User(SQLModel, table=True):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True)
-    username = Column(String(100), unique=True, index=True, nullable=False)
-    email = Column(String(320), unique=True, index=True, nullable=False)
-    full_name = Column(String(200), nullable=False)
-    hashed_password = Column(String(255), nullable=False)
-    role = Column(SAEnum(UserRole), default=UserRole.customer, nullable=False)
-    is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    username: str = Field(max_length=100, unique=True, index=True)
+    email: str = Field(max_length=320, unique=True, index=True)
+    full_name: str = Field(max_length=200)
+    hashed_password: str = Field(max_length=255)
+    role: UserRole = Field(default=UserRole.customer, sa_type=SAEnum(UserRole, name="userrole"))
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
 # ── Role Permissions ──────────────────────────────────────────────────────────
@@ -66,115 +55,115 @@ DEFAULT_ROLE_PERMISSIONS: dict = {
 }
 
 
-class RolePermissions(Base):
+class RolePermissions(SQLModel, table=True):
     __tablename__ = "role_permissions"
 
-    id = Column(Integer, primary_key=True)
-    role = Column(SAEnum(UserRole), unique=True, nullable=False)
-    permissions = Column(JSON, nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    id: int | None = Field(default=None, primary_key=True)
+    role: UserRole = Field(sa_type=SAEnum(UserRole, name="userrole"), unique=True)
+    permissions: dict = Field(sa_type=JSON)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_by: int | None = Field(default=None, foreign_key="users.id")
 
-    editor = relationship("User", foreign_keys=[updated_by])
+    editor: User | None = Relationship(sa_relationship_kwargs={"foreign_keys": "RolePermissions.updated_by"})
 
 
-class Category(Base):
+class Category(SQLModel, table=True):
     __tablename__ = "categories"
 
-    id = Column(Integer, primary_key=True)
-    name = Column(String(120), unique=True, nullable=False)
-    slug = Column(String(140), unique=True, nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    name: str = Field(max_length=120, unique=True)
+    slug: str = Field(max_length=140, unique=True, index=True)
+    description: str | None = Field(default=None, sa_type=Text)
+    is_active: bool = Field(default=True)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class Product(Base):
+class Product(SQLModel, table=True):
     __tablename__ = "products"
     __table_args__ = (CheckConstraint("price >= 0", name="ck_products_price_nonnegative"),)
 
-    id = Column(Integer, primary_key=True)
-    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
-    name = Column(String(200), nullable=False, index=True)
-    sku = Column(String(80), unique=True, nullable=False, index=True)
-    description = Column(Text, nullable=True)
-    price = Column(Numeric(12, 2), nullable=False, default=Decimal("0.00"))
-    currency = Column(String(3), nullable=False, default="INR")
-    is_published = Column(Boolean, default=False, nullable=False, index=True)
-    is_archived = Column(Boolean, default=False, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    category_id: int | None = Field(default=None, foreign_key="categories.id", index=True)
+    name: str = Field(max_length=200, index=True)
+    sku: str = Field(max_length=80, unique=True, index=True)
+    description: str | None = Field(default=None, sa_type=Text)
+    price: Decimal = Field(default=Decimal("0.00"), sa_type=Numeric(12, 2))
+    currency: str = Field(default="INR", max_length=3)
+    is_published: bool = Field(default=False, index=True)
+    is_archived: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
-    category = relationship("Category")
-    inventory = relationship("Inventory", back_populates="product", uselist=False, cascade="all, delete-orphan")
+    category: Category | None = Relationship()
+    inventory: Optional["Inventory"] = Relationship(back_populates="product", cascade_delete=True, sa_relationship_kwargs={"uselist": False})
 
 
-class Inventory(Base):
+class Inventory(SQLModel, table=True):
     __tablename__ = "inventory"
     __table_args__ = (
         CheckConstraint("quantity >= 0", name="ck_inventory_quantity_nonnegative"),
         CheckConstraint("low_stock_threshold >= 0", name="ck_inventory_low_stock_threshold_nonnegative"),
     )
 
-    id = Column(Integer, primary_key=True)
-    product_id = Column(Integer, ForeignKey("products.id"), unique=True, nullable=False)
-    quantity = Column(Integer, nullable=False, default=0)
-    low_stock_threshold = Column(Integer, nullable=False, default=5)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    product_id: int = Field(foreign_key="products.id", unique=True)
+    quantity: int = Field(default=0)
+    low_stock_threshold: int = Field(default=5)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
-    product = relationship("Product", back_populates="inventory")
+    product: Product = Relationship(back_populates="inventory")
 
 
-class InventoryMovement(Base):
+class InventoryMovement(SQLModel, table=True):
     __tablename__ = "inventory_movements"
 
-    id = Column(Integer, primary_key=True)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False, index=True)
-    quantity_delta = Column(Integer, nullable=False)
-    reason = Column(String(255), nullable=False)
-    reference_type = Column(String(50), nullable=True)
-    reference_id = Column(String(100), nullable=True)
-    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    product_id: int = Field(foreign_key="products.id", index=True)
+    quantity_delta: int
+    reason: str = Field(max_length=255)
+    reference_type: str | None = Field(default=None, max_length=50)
+    reference_id: str | None = Field(default=None, max_length=100)
+    created_by: int | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class Cart(Base):
+class Cart(SQLModel, table=True):
     __tablename__ = "carts"
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    items = relationship("CartItem", cascade="all, delete-orphan", back_populates="cart")
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", unique=True)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    items: list["CartItem"] = Relationship(back_populates="cart", cascade_delete=True)
 
 
-class CartItem(Base):
+class CartItem(SQLModel, table=True):
     __tablename__ = "cart_items"
     __table_args__ = (
         UniqueConstraint("cart_id", "product_id", name="uq_cart_product"),
         CheckConstraint("quantity > 0", name="ck_cart_items_quantity_positive"),
     )
 
-    id = Column(Integer, primary_key=True)
-    cart_id = Column(Integer, ForeignKey("carts.id"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
-    quantity = Column(Integer, nullable=False)
-    cart = relationship("Cart", back_populates="items")
-    product = relationship("Product")
+    id: int | None = Field(default=None, primary_key=True)
+    cart_id: int = Field(foreign_key="carts.id")
+    product_id: int = Field(foreign_key="products.id")
+    quantity: int
+    cart: Cart = Relationship(back_populates="items")
+    product: Product = Relationship()
 
 
-class Address(Base):
+class Address(SQLModel, table=True):
     __tablename__ = "addresses"
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    line1 = Column(String(200), nullable=False)
-    line2 = Column(String(200), nullable=True)
-    city = Column(String(100), nullable=False)
-    state = Column(String(100), nullable=False)
-    postal_code = Column(String(20), nullable=False)
-    country = Column(String(2), nullable=False, default="IN")
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    line1: str = Field(max_length=200)
+    line2: str | None = Field(default=None, max_length=200)
+    city: str = Field(max_length=100)
+    state: str = Field(max_length=100)
+    postal_code: str = Field(max_length=20)
+    country: str = Field(default="IN", max_length=2)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
 class OrderStatus(str, enum.Enum):
@@ -187,54 +176,54 @@ class OrderStatus(str, enum.Enum):
     refunded = "refunded"
 
 
-class Order(Base):
+class Order(SQLModel, table=True):
     __tablename__ = "orders"
     __table_args__ = (
         UniqueConstraint("user_id", "idempotency_key", name="uq_order_idempotency"),
         CheckConstraint("total >= 0", name="ck_orders_total_nonnegative"),
     )
 
-    id = Column(Integer, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    address_id = Column(Integer, ForeignKey("addresses.id"), nullable=False)
-    status = Column(SAEnum(OrderStatus), default=OrderStatus.pending_payment, nullable=False, index=True)
-    currency = Column(String(3), nullable=False, default="INR")
-    total = Column(Numeric(12, 2), nullable=False)
-    idempotency_key = Column(String(128), nullable=False)
-    request_fingerprint = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True, nullable=False)
-    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
-    items = relationship("OrderItem", cascade="all, delete-orphan", back_populates="order")
-    history = relationship("OrderStatusHistory", cascade="all, delete-orphan", back_populates="order")
+    id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(foreign_key="users.id", index=True)
+    address_id: int = Field(foreign_key="addresses.id")
+    status: OrderStatus = Field(default=OrderStatus.pending_payment, sa_type=SAEnum(OrderStatus, name="orderstatus"), index=True)
+    currency: str = Field(default="INR", max_length=3)
+    total: Decimal = Field(sa_type=Numeric(12, 2))
+    idempotency_key: str = Field(max_length=128)
+    request_fingerprint: str = Field(max_length=64)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True), index=True)
+    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    items: list["OrderItem"] = Relationship(back_populates="order", cascade_delete=True)
+    history: list["OrderStatusHistory"] = Relationship(back_populates="order", cascade_delete=True)
 
 
-class OrderItem(Base):
+class OrderItem(SQLModel, table=True):
     __tablename__ = "order_items"
     __table_args__ = (
         CheckConstraint("quantity > 0", name="ck_order_items_quantity_positive"),
         CheckConstraint("unit_price >= 0", name="ck_order_items_unit_price_nonnegative"),
     )
 
-    id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
-    product_id = Column(Integer, ForeignKey("products.id"), nullable=True)
-    product_name = Column(String(200), nullable=False)
-    sku = Column(String(80), nullable=False)
-    quantity = Column(Integer, nullable=False)
-    unit_price = Column(Numeric(12, 2), nullable=False)
-    order = relationship("Order", back_populates="items")
+    id: int | None = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="orders.id")
+    product_id: int | None = Field(default=None, foreign_key="products.id")
+    product_name: str = Field(max_length=200)
+    sku: str = Field(max_length=80)
+    quantity: int
+    unit_price: Decimal = Field(sa_type=Numeric(12, 2))
+    order: "Order" = Relationship(back_populates="items")
 
 
-class OrderStatusHistory(Base):
+class OrderStatusHistory(SQLModel, table=True):
     __tablename__ = "order_status_history"
 
-    id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False)
-    from_status = Column(String(40), nullable=True)
-    to_status = Column(String(40), nullable=False)
-    changed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    order = relationship("Order", back_populates="history")
+    id: int | None = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="orders.id")
+    from_status: str | None = Field(default=None, max_length=40)
+    to_status: str = Field(max_length=40)
+    changed_by: int | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    order: Order = Relationship(back_populates="history")
 
 
 class PaymentStatus(str, enum.Enum):
@@ -245,42 +234,42 @@ class PaymentStatus(str, enum.Enum):
     refunded = "refunded"
 
 
-class Payment(Base):
+class Payment(SQLModel, table=True):
     __tablename__ = "payments"
     __table_args__ = (
         UniqueConstraint("order_id", "idempotency_key", name="uq_payment_idempotency"),
         CheckConstraint("amount >= 0", name="ck_payments_amount_nonnegative"),
     )
 
-    id = Column(Integer, primary_key=True)
-    order_id = Column(Integer, ForeignKey("orders.id"), nullable=False, index=True)
-    status = Column(SAEnum(PaymentStatus), default=PaymentStatus.pending, nullable=False)
-    amount = Column(Numeric(12, 2), nullable=False)
-    idempotency_key = Column(String(128), nullable=False)
-    request_fingerprint = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    order_id: int = Field(foreign_key="orders.id", index=True)
+    status: PaymentStatus = Field(default=PaymentStatus.pending, sa_type=SAEnum(PaymentStatus, name="paymentstatus"))
+    amount: Decimal = Field(sa_type=Numeric(12, 2))
+    idempotency_key: str = Field(max_length=128)
+    request_fingerprint: str = Field(max_length=64)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class PaymentStatusHistory(Base):
+class PaymentStatusHistory(SQLModel, table=True):
     __tablename__ = "payment_status_history"
 
-    id = Column(Integer, primary_key=True)
-    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False, index=True)
-    from_status = Column(String(40), nullable=True)
-    to_status = Column(String(40), nullable=False)
-    changed_by = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    payment_id: int = Field(foreign_key="payments.id", index=True)
+    from_status: str | None = Field(default=None, max_length=40)
+    to_status: str = Field(max_length=40)
+    changed_by: int | None = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class Refund(Base):
+class Refund(SQLModel, table=True):
     __tablename__ = "refunds"
     __table_args__ = (CheckConstraint("amount >= 0", name="ck_refunds_amount_nonnegative"),)
 
-    id = Column(Integer, primary_key=True)
-    payment_id = Column(Integer, ForeignKey("payments.id"), nullable=False, unique=True)
-    amount = Column(Numeric(12, 2), nullable=False)
-    reason = Column(String(255), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    id: int | None = Field(default=None, primary_key=True)
+    payment_id: int = Field(foreign_key="payments.id", unique=True)
+    amount: Decimal = Field(sa_type=Numeric(12, 2))
+    reason: str = Field(max_length=255)
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
 # ─── Add Your Custom Models Below ────────────────────────────────────────────
@@ -292,4 +281,4 @@ class Refund(Base):
 #     
 #     id = Column(Integer, primary_key=True, index=True)
 #     name = Column(String(200), nullable=False)
-#     created_at = Column(DateTime(timezone=True), server_default=func.now())
+#     created_at: datetime = Field(default_factory=utc_now)

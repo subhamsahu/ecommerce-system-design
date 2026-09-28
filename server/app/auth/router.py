@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.auth.dependencies import create_access_token, hash_password, verify_password
@@ -24,9 +24,9 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
     """
     username = user_in.username.strip().lower()
     email = user_in.email.strip().lower()
-    if db.query(models.User).filter(models.User.username == username).first():
+    if db.exec(select(models.User).where(models.User.username == username)).first():
         raise HTTPException(status_code=409, detail="Username already registered")
-    if db.query(models.User).filter(models.User.email == email).first():
+    if db.exec(select(models.User).where(models.User.email == email)).first():
         raise HTTPException(status_code=409, detail="Email already registered")
     user = models.User(
         username=username,
@@ -55,7 +55,7 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
         HTTPException: 401 if the credentials are incorrect or the account is inactive; 422 for invalid input.
     """
     username = login_data.username.strip().lower()
-    user = db.query(models.User).filter(models.User.username == username).first()
+    user = db.exec(select(models.User).where(models.User.username == username)).first()
     if not user or not user.is_active or not verify_password(login_data.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
     token = create_access_token({"sub": user.username, "role": user.role.value})

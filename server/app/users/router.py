@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import get_current_user, hash_password, require_admin
@@ -52,7 +52,7 @@ def update_profile(updates: ProfileUpdate, db: Session = Depends(get_db), curren
     """
     if updates.email:
         email = updates.email.strip().lower()
-        duplicate = db.query(models.User).filter(models.User.email == email, models.User.id != current_user.id).first()
+        duplicate = db.exec(select(models.User).where(models.User.email == email, models.User.id != current_user.id)).first()
         if duplicate:
             raise HTTPException(status_code=409, detail="Email already registered")
         current_user.email = email
@@ -75,7 +75,7 @@ def list_users(db: Session = Depends(get_db), _: models.User = Depends(require_a
     Raises:
         HTTPException: 401 if unauthenticated or 403 if the user is not an administrator.
     """
-    return db.query(models.User).order_by(models.User.created_at).all()
+    return db.exec(select(models.User).order_by(models.User.created_at)).all()
 
 
 @router.post("", response_model=UserResponse, status_code=201)
@@ -92,10 +92,10 @@ def create_user(user_in: UserCreate, db: Session = Depends(get_db), _: models.Us
         HTTPException: 401 if unauthenticated, 403 if not an administrator, 409 if the username or email conflicts, or 422 for invalid input.
     """
     username = user_in.username.strip().lower()
-    if db.query(models.User).filter(models.User.username == username).first():
+    if db.exec(select(models.User).where(models.User.username == username)).first():
         raise HTTPException(status_code=409, detail="Username already exists")
     email = user_in.email.strip().lower()
-    if db.query(models.User).filter(models.User.email == email).first():
+    if db.exec(select(models.User).where(models.User.email == email)).first():
         raise HTTPException(status_code=409, detail="Email already exists")
     user = models.User(
         username=username,
@@ -137,7 +137,7 @@ def update_user(user_id: int, updates: AdminUserUpdate, db: Session = Depends(ge
         user.is_active = updates.is_active
     if updates.email is not None:
         email = updates.email.strip().lower()
-        duplicate = db.query(models.User).filter(models.User.email == email, models.User.id != user.id).first()
+        duplicate = db.exec(select(models.User).where(models.User.email == email, models.User.id != user.id)).first()
         if duplicate:
             raise HTTPException(status_code=409, detail="Email already exists")
         user.email = email

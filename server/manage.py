@@ -25,9 +25,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 import subprocess
 import getpass
 from decimal import Decimal
-from sqlalchemy import select
+from sqlmodel import SQLModel, select
 from sqlmodel import Session
-from app.core.database import Base, engine
+from app.core.database import engine
 from app import models
 from app.models import User, UserRole, RolePermissions, DEFAULT_ROLE_PERMISSIONS
 from app.auth import hash_password
@@ -296,7 +296,7 @@ def seed_fake(count: int = 100):
         category_names = ["Electronics", "Home", "Books", "Apparel", "Sports"]
         categories = []
         for name in category_names:
-            category = db.query(models.Category).filter(models.Category.name == name).first()
+            category = db.exec(select(models.Category).where(models.Category.name == name)).first()
             if not category:
                 slug = name.lower().replace(" ", "-")
                 category = models.Category(name=name, slug=slug, description=f"Seed category: {name}")
@@ -311,7 +311,7 @@ def seed_fake(count: int = 100):
             end = min(start + batch_size, count + 1)
             for index in range(start, end):
                 username = f"seed_user_{index:06d}"
-                user = db.query(User).filter(User.username == username).first()
+                user = db.exec(select(User).where(User.username == username)).first()
                 if not user:
                     user = User(
                         username=username,
@@ -325,7 +325,7 @@ def seed_fake(count: int = 100):
                     created_users += 1
 
                 sku = f"SEED-{index:06d}"
-                product = db.query(models.Product).filter(models.Product.sku == sku).first()
+                product = db.exec(select(models.Product).where(models.Product.sku == sku)).first()
                 if not product:
                     product = models.Product(
                         category_id=categories[(index - 1) % len(categories)].id,
@@ -340,7 +340,7 @@ def seed_fake(count: int = 100):
                     db.flush()
                     created_products += 1
 
-                inventory = db.query(models.Inventory).filter(models.Inventory.product_id == product.id).first()
+                inventory = db.exec(select(models.Inventory).where(models.Inventory.product_id == product.id)).first()
                 if not inventory:
                     inventory = models.Inventory(product_id=product.id, quantity=100, low_stock_threshold=10)
                     db.add(inventory)
@@ -353,7 +353,7 @@ def seed_fake(count: int = 100):
                     ))
                     created_inventory += 1
 
-                if not db.query(models.Cart).filter(models.Cart.user_id == user.id).first():
+                if not db.exec(select(models.Cart).where(models.Cart.user_id == user.id)).first():
                     db.add(models.Cart(user_id=user.id))
                     created_carts += 1
 
@@ -429,11 +429,11 @@ def reset_db():
     
     print("🗑️  Dropping all tables...")
     try:
-        Base.metadata.drop_all(bind=engine)
+        SQLModel.metadata.drop_all(bind=engine)
         print("✅ All tables dropped")
         
         print("📋 Creating fresh tables...")
-        Base.metadata.create_all(bind=engine)
+        SQLModel.metadata.create_all(bind=engine)
         print("✅ Tables created")
         
         # Seed initial data

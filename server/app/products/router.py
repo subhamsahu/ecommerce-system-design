@@ -1,12 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import require_admin
 from app.core.schemas import Page
-from app.core.utils import slugify
+from app.core.utils import slugify, utc_now
 from app.core.database import get_db
 from app.products.schemas import CategoryCreate, CategoryResponse, CategoryUpdate, ProductCreate, ProductListResponse, ProductResponse, ProductUpdate
 
@@ -23,7 +23,7 @@ def list_categories(db: Session = Depends(get_db)):
     Raises:
         HTTPException: 422 if request validation fails.
     """
-    return db.query(models.Category).filter(models.Category.is_active.is_(True)).order_by(models.Category.name).all()
+    return db.exec(select(models.Category).where(models.Category.is_active.is_(True)).order_by(models.Category.name)).all()
 
 
 @router.get("/admin/dashboard")
@@ -36,16 +36,16 @@ def admin_dashboard(db: Session = Depends(get_db), _: models.User = Depends(requ
     Raises:
         HTTPException: 401 if unauthenticated or 403 if not an administrator.
     """
-    low_stock = db.query(func.count(models.Inventory.id)).filter(
+    low_stock = db.exec(select(func.count(models.Inventory.id)).where(
         models.Inventory.quantity <= models.Inventory.low_stock_threshold
-    ).scalar()
+    )).one()
     return {
-        "total_products": db.query(func.count(models.Product.id)).scalar(),
+        "total_products": db.exec(select(func.count(models.Product.id))).one(),
         "low_stock_products": low_stock,
-        "total_orders": db.query(func.count(models.Order.id)).scalar(),
-        "total_customers": db.query(func.count(models.User.id)).filter(
+        "total_orders": db.exec(select(func.count(models.Order.id))).one(),
+        "total_customers": db.exec(select(func.count(models.User.id)).where(
             models.User.role == models.UserRole.customer
-        ).scalar(),
+        )).one(),
     }
 
 
@@ -83,7 +83,7 @@ def admin_categories(db: Session = Depends(get_db), _: models.User = Depends(req
     Raises:
         HTTPException: 401 if unauthenticated or 403 if not an administrator.
     """
-    return db.query(models.Category).order_by(models.Category.name).all()
+    return db.exec(select(models.Category).order_by(models.Category.name)).all()
 
 
 @router.patch("/admin/categories/{category_id}", response_model=CategoryResponse)
@@ -151,18 +151,18 @@ def list_products(
     Raises:
         HTTPException: 422 if a query parameter is invalid.
     """
-    query = db.query(models.Product).filter(models.Product.is_published.is_(True), models.Product.is_archived.is_(False))
+    filters = [models.Product.is_published.is_(True), models.Product.is_archived.is_(False)]
     if search:
         term = f"%{search.strip()}%"
-        query = query.filter((models.Product.name.ilike(term)) | (models.Product.sku.ilike(term)))
+        filters.append((models.Product.name.ilike(term)) | (models.Product.sku.ilike(term)))
     if category_id is not None:
-        query = query.filter(models.Product.category_id == category_id)
+        filters.append(models.Product.category_id == category_id)
     if min_price is not None:
-        query = query.filter(models.Product.price >= min_price)
+        filters.append(models.Product.price >= min_price)
     if max_price is not None:
-        query = query.filter(models.Product.price <= max_price)
-    total = query.count()
-    rows = query.order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        filters.append(models.Product.price <= max_price)
+    total = db.exec(select(func.count(models.Product.id)).where(*filters)).one()
+    rows = db.exec(select(models.Product).where(*filters).order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
     return {
         "items": [_product_response(row) for row in rows],
         "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
@@ -182,7 +182,7 @@ def get_product(product_id: int, db: Session = Depends(get_db)):
     Raises:
         HTTPException: 404 if the product does not exist or is not publicly available; 422 if the ID is invalid.
     """
-    product = db.query(models.Product).filter(models.Product.id == product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False)).first()
+    product = db.exec(select(models.Product).where(models.Product.id == product_id, models.Product.is_published.is_(True), models.Product.is_archived.is_(False))).first()
     if not product:
         raise HTTPException(status_code=404, detail="Product not found")
     return _product_response(product)
@@ -207,9 +207,8 @@ def admin_products(
     Raises:
         HTTPException: 401 if unauthenticated, 403 if not an administrator, or 422 if a query parameter is invalid.
     """
-    query = db.query(models.Product)
-    total = query.count()
-    products = query.order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+    total = db.exec(select(func.count(models.Product.id))).one()
+    products = db.exec(select(models.Product).order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
     return {
         "items": [_product_response(product) for product in products],
         "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
@@ -265,8 +264,11 @@ def update_product(product_id: int, body: ProductUpdate, db: Session = Depends(g
         raise HTTPException(status_code=404, detail="Product not found")
     if body.category_id is not None and not db.get(models.Category, body.category_id):
         raise HTTPException(status_code=422, detail="Category not found")
-    for key, value in body.model_dump(exclude_unset=True).items():
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
         setattr(product, key, value)
+    if updates:
+        product.updated_at = utc_now()
     try:
         db.commit()
     except IntegrityError as exc:

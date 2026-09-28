@@ -2,11 +2,12 @@ from typing import Any, Dict
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from app import models
 from app.auth import get_current_user, require_admin
 from app.core.database import get_db
+from app.core.utils import utc_now
 
 router = APIRouter(prefix="/permissions", tags=["Permissions"])
 
@@ -18,7 +19,7 @@ class PermissionsUpdateRequest(BaseModel):
 def _ensure_seeded(db: Session) -> None:
     for role_name, permission_set in models.DEFAULT_ROLE_PERMISSIONS.items():
         role = models.UserRole(role_name)
-        exists = db.query(models.RolePermissions).filter(models.RolePermissions.role == role).first()
+        exists = db.exec(select(models.RolePermissions).where(models.RolePermissions.role == role)).first()
         if not exists:
             db.add(models.RolePermissions(role=role, permissions=permission_set))
     db.commit()
@@ -38,7 +39,7 @@ def get_all_permissions(
         HTTPException: 401 if the bearer token is missing or invalid.
     """
     _ensure_seeded(db)
-    rows = db.query(models.RolePermissions).all()
+    rows = db.exec(select(models.RolePermissions)).all()
     return {row.role.value: row.permissions for row in rows}
 
 
@@ -70,12 +71,13 @@ def update_role_permissions(
         raise HTTPException(status_code=404, detail=f"Role '{role}' not found") from exc
 
     _ensure_seeded(db)
-    row = db.query(models.RolePermissions).filter(models.RolePermissions.role == role_enum).first()
+    row = db.exec(select(models.RolePermissions).where(models.RolePermissions.role == role_enum)).first()
     if not row:
         raise HTTPException(status_code=404, detail="Permissions record not found")
 
     row.permissions = body.permissions
     row.updated_by = current_user.id
+    row.updated_at = utc_now()
     db.commit()
     db.refresh(row)
     return row.permissions

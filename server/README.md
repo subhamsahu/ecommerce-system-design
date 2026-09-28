@@ -1,6 +1,6 @@
 # Backend - FastAPI Server
 
-FastAPI backend with SQLAlchemy, Alembic migrations, and JWT authentication.  
+FastAPI backend with SQLModel ORM models and sessions, Alembic migrations, and JWT authentication.
 Part of the full-stack application base template.
 
 ---

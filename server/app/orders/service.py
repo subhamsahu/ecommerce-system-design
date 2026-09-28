@@ -6,9 +6,11 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import joinedload
+from sqlmodel import Session, select
 
 from app import models
+from app.core.utils import utc_now
 from app.orders.schemas import CheckoutRequest
 
 
@@ -31,9 +33,9 @@ def fingerprint(body: CheckoutRequest) -> str:
 def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_key: str) -> tuple[models.Order, bool]:
     request_fingerprint = fingerprint(body)
     existing = (
-        db.query(models.Order)
+        db.exec(select(models.Order)
         .options(joinedload(models.Order.items))
-        .filter(models.Order.user_id == user.id, models.Order.idempotency_key == idempotency_key)
+        .where(models.Order.user_id == user.id, models.Order.idempotency_key == idempotency_key)).unique()
         .first()
     )
     if existing:
@@ -42,9 +44,9 @@ def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_
         return existing, False
 
     cart = (
-        db.query(models.Cart)
+        db.exec(select(models.Cart)
         .options(joinedload(models.Cart.items))
-        .filter(models.Cart.user_id == user.id)
+        .where(models.Cart.user_id == user.id)).unique()
         .first()
     )
     if not cart or not cart.items:
@@ -68,16 +70,16 @@ def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_
         # A stable lock order avoids avoidable deadlocks for carts sharing products.
         for cart_item in sorted(list(cart.items), key=lambda item: item.product_id):
             inventory = (
-                db.query(models.Inventory)
-                .filter(models.Inventory.product_id == cart_item.product_id)
-                .with_for_update()
-                .first()
+                db.exec(select(models.Inventory)
+                .where(models.Inventory.product_id == cart_item.product_id)
+                .with_for_update()).first()
             )
             product = db.get(models.Product, cart_item.product_id)
             if not product or product.is_archived or not product.is_published or not inventory or inventory.quantity < cart_item.quantity:
                 raise HTTPException(status_code=409, detail="A cart item is no longer available in the requested quantity")
             total += product.price * cart_item.quantity
             inventory.quantity -= cart_item.quantity
+            inventory.updated_at = utc_now()
             db.add(models.InventoryMovement(
                 product_id=product.id,
                 quantity_delta=-cart_item.quantity,
@@ -96,6 +98,8 @@ def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_
             db.delete(cart_item)
 
         order.total = total
+        order.updated_at = utc_now()
+        cart.updated_at = utc_now()
         order.history.append(models.OrderStatusHistory(to_status=order.status.value, changed_by=user.id))
         initial_payment = models.Payment(
             order_id=order.id,
@@ -114,9 +118,9 @@ def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_
     except IntegrityError as exc:
         db.rollback()
         concurrent = (
-            db.query(models.Order)
+            db.exec(select(models.Order)
             .options(joinedload(models.Order.items))
-            .filter(models.Order.user_id == user.id, models.Order.idempotency_key == idempotency_key)
+            .where(models.Order.user_id == user.id, models.Order.idempotency_key == idempotency_key)).unique()
             .first()
         )
         if concurrent:
@@ -130,10 +134,9 @@ def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_
 
 def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order:
     order = (
-        db.query(models.Order)
-        .filter(models.Order.id == order_id)
-        .with_for_update()
-        .first()
+        db.exec(select(models.Order)
+        .where(models.Order.id == order_id)
+        .with_for_update()).first()
     )
     if not order or (actor.role != models.UserRole.admin and order.user_id != actor.id):
         raise HTTPException(status_code=404, detail="Order not found")
@@ -143,14 +146,14 @@ def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order
     old_status = order.status.value
     for item in order.items:
         inventory = (
-            db.query(models.Inventory)
-            .filter(models.Inventory.product_id == item.product_id)
-            .with_for_update()
-            .first()
+            db.exec(select(models.Inventory)
+            .where(models.Inventory.product_id == item.product_id)
+            .with_for_update()).first()
         )
         if not inventory:
             raise HTTPException(status_code=409, detail="Order inventory record is missing")
         inventory.quantity += item.quantity
+        inventory.updated_at = utc_now()
         db.add(models.InventoryMovement(
             product_id=item.product_id,
             quantity_delta=item.quantity,
@@ -161,10 +164,9 @@ def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order
         ))
 
     succeeded_payment = (
-        db.query(models.Payment)
-        .filter(models.Payment.order_id == order.id, models.Payment.status == models.PaymentStatus.succeeded)
-        .with_for_update()
-        .first()
+        db.exec(select(models.Payment)
+        .where(models.Payment.order_id == order.id, models.Payment.status == models.PaymentStatus.succeeded)
+        .with_for_update()).first()
     )
     if succeeded_payment:
         succeeded_payment.status = models.PaymentStatus.refunded
@@ -176,6 +178,7 @@ def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order
             changed_by=actor.id,
         ))
     order.status = models.OrderStatus.cancelled
+    order.updated_at = utc_now()
     order.history.append(models.OrderStatusHistory(from_status=old_status, to_status=order.status.value, changed_by=actor.id))
     db.commit()
     db.refresh(order)
@@ -185,7 +188,7 @@ def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order
 def update_status(db: Session, order_id: int, status: models.OrderStatus, actor: models.User) -> models.Order:
     # Lock only the order row. joinedload() adds an outer join to order_items,
     # which PostgreSQL rejects when FOR UPDATE is applied to the nullable side.
-    order = db.query(models.Order).filter(models.Order.id == order_id).with_for_update().first()
+    order = db.exec(select(models.Order).where(models.Order.id == order_id).with_for_update()).first()
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
     if status == models.OrderStatus.cancelled:
@@ -194,6 +197,7 @@ def update_status(db: Session, order_id: int, status: models.OrderStatus, actor:
         raise HTTPException(status_code=409, detail="Invalid order status transition")
     old_status = order.status.value
     order.status = status
+    order.updated_at = utc_now()
     order.history.append(models.OrderStatusHistory(from_status=old_status, to_status=status.value, changed_by=actor.id))
     db.commit()
     db.refresh(order)
