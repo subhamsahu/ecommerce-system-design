@@ -497,6 +497,14 @@ Recommended status usage:
 
 ### 11.5 Idempotency
 
+An idempotency key is a unique value the client sends with a request so that retrying it won’t accidentally create the same thing twice.
+
+For POST /orders, the server associates the key with the authenticated customer and the request:
+
+Same customer, same key, same request body: return the original order outcome.
+Same customer, same key, different request body: return a conflict.
+New key: process it as a new checkout.
+
 - `POST /orders` requires an `Idempotency-Key` header.
 - The key is scoped to the authenticated customer and operation.
 - A repeated key with the same request returns the original outcome.
