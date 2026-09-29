@@ -1,9 +1,10 @@
 """Locust scenarios for the ecommerce-system-design API.
 
 Run one scenario at a time from the repository root. Authenticated scenarios
-require one distinct customer/admin bearer token per concurrent Locust user.
-Set PERF_AUTH_TOKENS to a comma-separated token list, or PERF_AUTH_TOKEN for a
-single-user run. Do not put real or long-lived credentials in this file.
+log in with distinct ``seed_fake`` accounts. By default, the account pool is
+``seed_user_000001`` through ``seed_user_001000`` with password
+``TestPassword123!``. Configure PERF_USER_COUNT, PERF_USER_START_INDEX, or
+PERF_USER_PASSWORD when using a different seeded range or password.
 
 Checkout scenarios create real local orders and consume inventory. Run them
 against disposable data, and provision enough stock for approximately:
@@ -20,10 +21,12 @@ import os
 import uuid
 from queue import Empty, Queue
 
-from locust import HttpUser, StopUser, between, task
+from locust import HttpUser, between, task
+from locust.exception import StopUser
 
 
 PRODUCTS_PATH = "/api/v1/products"
+LOGIN_PATH = "/api/v1/auth/login"
 PROFILE_PATH = "/api/v1/users/me"
 CART_ITEMS_PATH = "/api/v1/cart/items"
 ORDERS_PATH = "/api/v1/orders"
@@ -37,21 +40,6 @@ CHECKOUT_BODY = {
         "postal_code": "00000",
     }
 }
-
-
-def _load_tokens() -> list[str]:
-    many = [token.strip() for token in os.getenv("PERF_AUTH_TOKENS", "").split(",") if token.strip()]
-    single = os.getenv("PERF_AUTH_TOKEN", "").strip()
-    tokens = many or ([single] if single else [])
-    # A repeated token is not a distinct user and causes cart/profile overlap.
-    if len(set(tokens)) != len(tokens):
-        raise RuntimeError("PERF_AUTH_TOKENS must contain distinct bearer tokens")
-    return tokens
-
-
-_TOKEN_POOL: Queue[str] = Queue()
-for _token in _load_tokens():
-    _TOKEN_POOL.put(_token)
 
 
 def _positive_int_env(name: str, default: int | None = None) -> int:
@@ -69,24 +57,52 @@ def _positive_int_env(name: str, default: int | None = None) -> int:
     return value
 
 
-class AuthenticatedUserMixin:
-    """Lease a distinct test account token to each active user in one process."""
+_USER_PASSWORD = os.getenv("PERF_USER_PASSWORD", "TestPassword123!")
+_USER_START_INDEX = _positive_int_env("PERF_USER_START_INDEX", default=1)
+_USER_COUNT = _positive_int_env("PERF_USER_COUNT", default=1000)
+_USER_POOL: Queue[str] = Queue()
+for _user_index in range(_USER_START_INDEX, _USER_START_INDEX + _USER_COUNT):
+    _USER_POOL.put(f"seed_user_{_user_index:06d}")
 
-    token: str | None = None
+
+class AuthenticatedUserMixin:
+    """Log in with a distinct seeded account for each active user in one process."""
+
+    username: str | None = None
 
     def on_start(self) -> None:
         try:
-            self.token = _TOKEN_POOL.get_nowait()
+            username = _USER_POOL.get_nowait()
         except Empty:
-            # This keeps concurrent virtual users from sharing a cart/account.
             raise StopUser from None
-        self.client.headers["Authorization"] = f"Bearer {self.token}"
+        self.username = username
+        with self.client.post(
+            LOGIN_PATH,
+            json={"username": username, "password": _USER_PASSWORD},
+            name="POST /api/v1/auth/login",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Login failed: expected 200, got {response.status_code}")
+                self.username = None
+                raise StopUser
+            try:
+                token = response.json()["access_token"]
+            except (ValueError, KeyError, TypeError):
+                response.failure("Login response did not contain access_token")
+                self.username = None
+                raise StopUser
+            if not isinstance(token, str) or not token:
+                response.failure("Login response did not contain a valid access_token")
+                self.username = None
+                raise StopUser
+        self.client.headers["Authorization"] = f"Bearer {token}"
 
     def on_stop(self) -> None:
-        if self.token:
+        if self.username:
             self.client.headers.pop("Authorization", None)
-            _TOKEN_POOL.put(self.token)
-            self.token = None
+            _USER_POOL.put(self.username)
+            self.username = None
 
 
 class CatalogReadUser(HttpUser):
@@ -98,8 +114,8 @@ class CatalogReadUser(HttpUser):
     def list_products(self) -> None:
         with self.client.get(
             PRODUCTS_PATH,
-            params={"page": 1, "page_size": 20},
-            name="GET /api/v1/products (page_size=20)",
+            params={"page": 1, "page_size": 200},
+            name="GET /api/v1/products (page_size=200)",
             catch_response=True,
         ) as response:
             if response.status_code != 200:
@@ -301,3 +317,10 @@ class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
     def _stop_at_limit(self) -> None:
         if self.iterations >= self.max_iterations:
             raise StopUser
+
+
+# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CatalogReadUser
+# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s ProfileWriteUser
+# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s ProductPageSizeUser
+# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CheckoutUser
+# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CheckoutIdempotencyUser
