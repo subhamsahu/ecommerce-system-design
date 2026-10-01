@@ -6,6 +6,7 @@ os.environ["DATABASE_URL"] = "sqlite:///./test_phase0.sqlite"
 os.environ["JWT_SECRET"] = "test-secret-not-for-production"
 
 import pytest
+from sqlalchemy import event
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, select
 
@@ -67,6 +68,38 @@ def test_cancelled_order_cannot_be_paid_and_stock_is_restored():
     assert payment.status_code == 409
     with Session(engine) as db:
         assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3
+
+
+def test_product_list_batches_inventory_queries():
+    client = TestClient(app)
+    with Session(engine) as db:
+        products = [
+            models.Product(name=f"Catalog item {index}", sku=f"CATALOG-{index}", is_published=True)
+            for index in range(20)
+        ]
+        db.add_all(products)
+        db.commit()
+        db.add_all([
+            models.Inventory(product_id=product.id, quantity=index)
+            for index, product in enumerate(products, start=1)
+        ])
+        db.commit()
+
+    select_statements = []
+
+    def record_select(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT"):
+            select_statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record_select)
+    try:
+        response = client.get("/api/v1/products", params={"page": 1, "page_size": 20})
+    finally:
+        event.remove(engine, "before_cursor_execute", record_select)
+
+    assert response.status_code == 200, response.text
+    assert len(response.json()["items"]) == 20
+    assert len(select_statements) == 3
 
 
 def test_checkout_idempotency_rejects_a_different_request_body():

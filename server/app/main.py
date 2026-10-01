@@ -1,12 +1,16 @@
 import re
 import time
+import os
+import asyncio
 from uuid import uuid4
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.requests import Request
+
 
 from app.auth.router import router as auth_router
 from app.cart.router import router as cart_router
@@ -23,12 +27,36 @@ settings = get_settings()
 logger = get_logger().get_std_logger()
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
+from app.core.database import engine
+
+async def monitor_database_pool() -> None:
+    while True:
+        logger.info(
+            "database_pool pid=%s status=%s",
+            os.getpid(),
+            engine.pool.status(),
+        )
+        await asyncio.sleep(5)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    pool_monitor = asyncio.create_task(monitor_database_pool())
+
+    try:
+        yield
+    finally:
+        pool_monitor.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await pool_monitor
+
 app = FastAPI(
     title="E-commerce System Design Laboratory API",
     description="Phase 0 modular-monolith backend for catalog, inventory, cart, orders, and simulated payments",
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(

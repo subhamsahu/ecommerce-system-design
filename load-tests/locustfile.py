@@ -114,8 +114,8 @@ class CatalogReadUser(HttpUser):
     def list_products(self) -> None:
         with self.client.get(
             PRODUCTS_PATH,
-            params={"page": 1, "page_size": 200},
-            name="GET /api/v1/products (page_size=200)",
+            params={"page": 1, "page_size": 20},
+            name="GET /api/v1/products (page_size=20)",
             catch_response=True,
         ) as response:
             if response.status_code != 200:

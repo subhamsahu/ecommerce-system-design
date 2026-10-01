@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import func
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from app import models
@@ -162,7 +163,14 @@ def list_products(
     if max_price is not None:
         filters.append(models.Product.price <= max_price)
     total = db.exec(select(func.count(models.Product.id)).where(*filters)).one()
-    rows = db.exec(select(models.Product).where(*filters).order_by(models.Product.created_at.desc()).offset((page - 1) * page_size).limit(page_size)).all()
+    rows = db.exec(
+        select(models.Product)
+        .options(selectinload(models.Product.inventory))
+        .where(*filters)
+        .order_by(models.Product.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    ).all()
     return {
         "items": [_product_response(row) for row in rows],
         "pagination": {"page": page, "page_size": page_size, "total_items": total, "total_pages": (total + page_size - 1) // page_size if total else 0},
