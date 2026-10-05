@@ -1,501 +1,121 @@
-# Full-Stack Application Base Template
+# E-commerce System Design Laboratory
 
-A production-ready full-stack web application template with authentication, user management, and role-based permissions.  
-Build your next application on top of this solid foundation with modern tech stack and best practices.
+A learning project that starts with a FastAPI modular monolith and evolves through measured system design experiments. The current backend covers authentication, catalog, inventory, cart, orders, and simulated payments. The React client currently focuses on administration; the full customer-facing journey is still being developed and verified.
 
----
+The project uses PostgreSQL for the local Compose environment. Redis, messaging, independent services, and Kubernetes belong to later stages of the [roadmap](docs/roadmap_microservice.md).
 
-## Tech Stack
+## Current architecture
 
-| Layer | Technology |
-|-------|-----------|
-| Backend | FastAPI (Python 3.14) |
-| Database | SQLite (dev) / PostgreSQL (prod) |
-| Migrations | Alembic |
-| ORM | SQLAlchemy 2.0 |
-| Auth | JWT (python-jose) + bcrypt |
-| Frontend | React 18 + TypeScript + Vite |
-| State | Redux Toolkit |
-| Styling | TailwindCSS + shadcn/ui |
-
----
-
-## Core Features
-
-| Module | Description |
-|--------|-------------|
-| **Authentication** | JWT-based authentication with secure password hashing |
-| **User Management** | Admin-only user creation and role assignment |
-| **Role-Based Permissions** | Per-role permission configuration (admin / staff / employee) |
-| **Dashboard** | Minimal dashboard template ready for customization |
-| **Settings** | App-level preferences and theme support |
-
----
-
-## What's Included
-
-**Backend (FastAPI):**
-- ✅ JWT authentication system
-- ✅ User CRUD operations with role-based access
-- ✅ Dynamic permission system
-- ✅ SQLAlchemy models with Alembic migrations
-- ✅ Pydantic schemas for validation
-- ✅ CORS configuration
-- ✅ Environment-based configuration
-- ✅ Database abstraction (SQLite for dev, PostgreSQL for prod)
-
-**Frontend (React + TypeScript):**
-- ✅ Modern React 18 with TypeScript
-- ✅ Redux Toolkit for state management
-- ✅ Protected routes with permission checks
-- ✅ Responsive sidebar navigation
-- ✅ Login/logout flow
-- ✅ User management UI for admins
-- ✅ Permission management UI
-- ✅ Settings page
-- ✅ Dark mode support
-- ✅ shadcn/ui component library
-- ✅ TailwindCSS for styling
-
----
-
-## Project Structure
-
-```
-application-base/
-├── .gitignore
-├── README.md
-│
-├── server/                        # FastAPI backend
-│   ├── app/
-│   │   ├── main.py                # App entry point & router registration
-│   │   ├── config.py              # Settings / env vars (pydantic-settings)
-│   │   ├── database.py            # SQLAlchemy engine & session
-│   │   ├── models.py              # ORM models (User, RolePermissions)
-│   │   ├── schemas.py             # Pydantic schemas
-│   │   ├── auth.py                # JWT helpers & dependency guards
-│   │   └── routers/
-│   │       ├── auth.py            # POST /auth/login
-│   │       ├── users.py           # /users (CRUD)
-│   │       └── permissions.py     # /permissions (role management)
-│   ├── migrations/                # Alembic migration scripts
-│   ├── manage.py                  # Django-style management commands
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── docker-compose.yml
-│
-└── client/                        # React + Vite frontend
-    └── src/
-        ├── api/client.ts          # Axios instance + API helpers
-        ├── components/            # Shared UI components (sidebar, nav, etc.)
-        │   ├── ui/                # shadcn/ui components
-        │   ├── app-sidebar.tsx    # Main navigation
-        │   ├── login-form.tsx     # Login component
-        │   ├── ProtectedRoute.tsx # Route guard
-        │   └── ...
-        ├── context/               # Theme & settings context
-        ├── hooks/                 # usePermissions,  use-mobile
-        ├── layout/                # App shell layout
-        ├── pages/
-        │   ├── Dashboard.tsx      # Main dashboard
-        │   ├── Login.tsx          # Login page
-        │   ├── UserManagement.tsx # User CRUD (admin only)
-        │   ├── Permissions.tsx    # Role permissions (admin only)
-        │   ├── Settings.tsx       # App settings
-        │   ├── Forbidden.tsx      # 403 page  
-        │   └── NotFound.tsx       # 404 page
-        ├── routes/index.tsx       # React Router config
-        ├── store/                 # Redux slices (auth, permissions)
-        └── types.ts               # Shared TypeScript types
+```mermaid
+flowchart LR
+    Browser --> Client[React client]
+    Client --> API[FastAPI modular monolith]
+    API --> DB[(PostgreSQL)]
 ```
 
----
+The payment simulator runs inside the API. A successful checkout first creates a `pending_payment` order; payment is a separate API request. Orders and inventory changes use local database transactions.
 
-## Getting Started
+| Directory | Contents |
+|---|---|
+| `server/` | FastAPI application, SQLModel models, Alembic migrations, management commands, and API tests |
+| `client/` | React, TypeScript, and Vite application |
+| `load-tests/` | Locust scenarios for catalog reads, profile writes, checkout, and idempotency |
+| `docs/` | Phase 0 foundation, architecture learning material, implementation plans, and review notes |
+| `docker-compose.yml` | PostgreSQL, API, and client services for local development |
 
-### 1. Backend Setup (Server)
+## Start locally with Docker Compose
 
-#### Local Development (SQLite — zero config)
+Run these commands **from the repository root**. You need Docker with the Compose plugin and free host ports `5432`, `8000`, and `5173`.
+
+The Compose file has development-only fallback values for `POSTGRES_PASSWORD` and `JWT_SECRET`. For your own local environment, place chosen values in a root `.env` file (which is Git-ignored):
+
+```dotenv
+POSTGRES_PASSWORD=choose-a-local-password
+JWT_SECRET=replace-with-a-long-random-local-secret
+VITE_API_URL=http://localhost:8000
+```
+
+Use a simple URL-safe local database password unless you encode special characters in the `DATABASE_URL` composed by `docker-compose.yml`. The root `.env` configures Compose; `server/.env.example` is for running the API outside Compose.
 
 ```bash
-cd server
-
-# Create and activate virtual environment
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Run database migrations
-python manage.py migrate
-
-# Seed initial data (role permissions)
-python manage.py seed
-
-# Create the first admin user (interactive)
-python manage.py createsuperuser
-
-# Start the API server
-uvicorn app.main:app --reload --port 8000
+docker compose up --build -d
+docker compose ps
 ```
 
-API docs will be available at: **http://localhost:8000/docs**
-
-#### Production (PostgreSQL)
-
-1. Create a `.env` file in `server/`:
-
-```env
-DATABASE_URL=postgresql://user:password@localhost:5432/app_db
-SECRET_KEY=replace-with-a-long-random-secret-at-least-32-characters
-ALGORITHM=HS256
-ACCESS_TOKEN_EXPIRE_MINUTES=1440
-```
-
-2. Uncomment `psycopg2-binary` in `requirements.txt`
-3. Run the same commands as above
-
-#### Using Docker
+The API container waits for PostgreSQL's health check and runs `alembic upgrade head` before starting Uvicorn. Verify each layer:
 
 ```bash
-cd server
-docker compose up --build
+docker compose exec ecomm-postgrs-service pg_isready -U labadmin -d ecommerce
+docker compose exec api alembic current
+curl -fsS http://localhost:8000/health
 ```
 
-### 2. Frontend Setup (Client)
+`/health` confirms the API process responds; the `pg_isready` and Alembic commands check the database separately. Browse the admin client at **http://localhost:5173** and API docs at **http://localhost:8000/docs**. The client is a built static app served on port 5173, so frontend changes require a rebuild of the client container.
+
+If startup fails, inspect the relevant container:
 
 ```bash
-cd client
-
-# Install dependencies
-npm install
-
-# Start development server
-npm run dev
+docker compose logs --tail=100 ecomm-postgrs-service api client
 ```
 
-Frontend will be available at: **http://localhost:5173**
-
-The Vite dev server automatically proxies API requests to `http://localhost:8000` (configured in `vite.config.ts`).
-
-### 3. Default Login
-
-After running `python manage.py createsuperuser`, use those credentials to login.  
-Default: username `admin`, password of your choice.
-
----
-
-## Management Commands
-
-The `manage.py` script provides Django-style management commands for common tasks:
-
-### Database Migrations
+Stop the stack without deleting the bind-mounted PostgreSQL data:
 
 ```bash
-# Create a new migration after modifying models
-python manage.py makemigrations "description of changes"
-
-# Run pending migrations
-python manage.py migrate
-
-# Show migration history
-python manage.py history
-
-# Show current database version
-python manage.py current
-
-# Rollback last migration
-python manage.py downgrade
-
-# Rollback to specific revision
-python manage.py downgrade abc123
+docker compose down
 ```
 
-### User Management
+Local database files live under `volumes/postgres_data/`. Treat that directory as local state, not as a Git backup.
+
+## Create an administrator and sample data
+
+After the API and database are running:
 
 ```bash
-# Create an admin user (interactive)
-python manage.py createsuperuser
-
-# Create a regular user (interactive - staff or employee)
-python manage.py createuser
+docker compose exec api python manage.py seed
+docker compose exec api python manage.py createsuperuser
 ```
 
-### Data Management
+`createsuperuser` prompts for a username, email, name, and password. There is no preconfigured admin login.
+
+For disposable local and load-test data, seed customers, published products, stock, and carts:
 
 ```bash
-# Seed initial data (role permissions)
-python manage.py seed
-
-# Reset database (WARNING: deletes all data)
-python manage.py reset_db
+docker compose exec api python manage.py seed_fake --count 1000
 ```
 
-### Development Tools
+The seeded customer names are `seed_user_000001` through `seed_user_001000` and use the test password printed by the seed command. `seed_fake` creates 100 units of stock per new product; checkout load tests can exhaust one product quickly, so provision enough stock for the complete run. Do not use these accounts or passwords in a public deployment.
+
+## API flow
+
+All business endpoints use `/api/v1`. The interactive docs at `/docs` show request schemas and responses.
+
+1. Register or log in through `/api/v1/auth`; use the returned bearer token for protected requests.
+2. An admin creates and publishes a product and adjusts stock through `/api/v1/admin/products` and `/api/v1/admin/inventory/adjustments`.
+3. A customer browses `/api/v1/products` and manages `/api/v1/cart/items`.
+4. The customer submits `POST /api/v1/orders` with a unique `Idempotency-Key` header. Repeating the same request/key returns the existing order.
+5. The customer calls `POST /api/v1/payments/{order_id}/attempt` with its own `Idempotency-Key` and a simulated `success`, `failure`, or `timeout` outcome. An admin can resolve a timed-out result via `POST /api/v1/payments/{order_id}/resolve-timeout`.
+6. An eligible order can be cancelled through `POST /api/v1/orders/{order_id}/cancellation`.
+
+The payment routes simulate outcomes; they do not connect to a real payment provider or store card details.
+
+## Tests and load scenarios
+
+The existing API regression suite uses a disposable **SQLite** database and covers selected order/payment invariants:
 
 ```bash
-# Open interactive Python shell with database session
-python manage.py shell
-
-# Open database shell (sqlite3 or psql)
-python manage.py dbshell
-
-# Show all available commands
-python manage.py help
+docker compose exec api python -m pytest -q tests/test_order_payment_invariants.py
 ```
 
----
-
-## Core API Endpoints
-
-### Authentication
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/auth/login` | Authenticate user, returns JWT token |
-
-### Users (Admin Only)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/users` | List all users |
-| `POST` | `/users` | Create a new user |
-| `PATCH` | `/users/{id}` | Update user role or password |
-| `DELETE` | `/users/{id}` | Delete a user |
-
-### Permissions (Admin Only)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/permissions` | Get all role permissions |
-| `PUT` | `/permissions/{role}` | Update permissions for a specific role |
-
----
-
-## Built-In Roles & Permissions
-
-| Permission | Admin | Staff | Employee |
-|-----------|-------|-------|----------|
-| View Dashboard | ✅ | ✅ | ✅ |
-| View User Management | ✅ | ❌ | ❌ |
-| Manage Users | ✅ | ❌ | ❌ |
-| View Settings | ✅ | ✅ | ✅ |
-
-> Admin permissions are always full and cannot be changed.  
-> Staff and Employee permissions can be configured via the Permissions page.
-
----
-
-## Customization Guide
-
-### Adding New Features
-
-#### 1. Backend (Add a New Model & Router)
-
-**Step 1:** Add your model in `server/app/models.py`
-
-```python
-class YourModel(Base):
-    __tablename__ = "your_table"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(200), nullable=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-```
-
-**Step 2:** Add schemas in `server/app/schemas.py`
-
-```python
-class YourModelCreate(BaseModel):
-    name: str
-
-class YourModelResponse(BaseModel):
-    id: int
-    name: str
-    created_at: datetime
-    
-    class Config:
-        from_attributes = True
-```
-
-**Step 3:** Create a router in `server/app/routers/your_feature.py`
-
-```python
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
-from app.database import get_db
-from app import models, schemas
-from app.auth import get_current_user
-
-router = APIRouter(prefix="/your-feature", tags=["Your Feature"])
-
-@router.get("", response_model=list[schemas.YourModelResponse])
-def list_items(db: Session = Depends(get_db), _: models.User = Depends(get_current_user)):
-    items = db.query(models.YourModel).all()
-    return items
-```
-
-**Step 4:** Register router in `server/app/main.py`
-
-```python
-from app.routers import auth, users, permissions, your_feature
-
-app.include_router(your_feature.router)
-```
-
-**Step 5:** Create and run migration
+For Locust, run from the repository root with Locust installed on the load-generator machine. Run one user class per test so the endpoint percentiles remain interpretable:
 
 ```bash
-cd server
-python manage.py makemigrations "add your_model"
-python manage.py migrate
+locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 100 -r 10 -t 10m CatalogReadUser
 ```
 
-#### 2. Frontend (Add a New Page)
+`ProductDetailReadUser` and `CheckoutUser` require `PERF_PRODUCT_ID` to point to a published product. `CheckoutUser` creates orders and completes simulated payments against real local inventory. It reports order and payment HTTP latencies separately. Record the dataset, application worker count, machine resources, warm-up, throughput, P50/P95/P99, and unexpected errors for every benchmark. See [the server assessment](docs/phase0_server_review.md) for the known limits of these scenarios.
 
-**Step 1:** Create page in `client/src/pages/YourFeature.tsx`
+## Project status and next work
 
-```tsx
-export default function YourFeature() {
-  return (
-    <div className="flex flex-1 flex-col gap-6 p-6">
-      <h1 className="text-2xl font-bold">Your Feature</h1>
-      {/* Your content here */}
-    </div>
-  )
-}
-```
-
-**Step 2:** Add route in `client/src/routes/index.tsx`
-
-```tsx
-import YourFeature from '@/pages/YourFeature'
-
-// In the children array:
-{
-  path: 'your-feature',
-  element: (
-    <ProtectedRoute requirePermission="canViewYourFeature">
-      <YourFeature />
-    </ProtectedRoute>
-  ),
-}
-```
-
-**Step 3:** Add navigation item in `client/src/components/app-sidebar.tsx`
-
-```tsx
-...(perms.canViewYourFeature
-  ? [{
-    title: "Your Feature",
-    url: "/your-feature",
-    icon: YourIcon,
-    items: [{ title: "Overview", url: "/your-feature" }],
-  }]
-  : []),
-```
-
-**Step 4:** Add permission to `server/app/models.py`
-
-```python
-DEFAULT_ROLE_PERMISSIONS: dict = {
-    "staff": {
-        "canViewDashboard": True,
-        "canViewYourFeature": True,  # Add this
-        # ...
-    },
-}
-```
-
----
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `DATABASE_URL` | DB connection string | `sqlite:///./app.db` |
-| `SECRET_KEY` | JWT signing secret | *(must change in prod)* |
-| `ALGORITHM` | JWT algorithm | `HS256` |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Token TTL | `1440` (24 hours) |
-
----
-
-## Deployment
-
-### Backend (Render / Railway / Fly.io)
-
-1. Set environment variables (DATABASE_URL, SECRET_KEY)
-2. Ensure `psycopg2-binary` is uncommented in `requirements.txt`
-3. Set build command: `pip install -r requirements.txt && alembic upgrade head`
-4. Set start command: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-
-### Frontend (Netlify / Vercel / Cloudflare Pages)
-
-1. Build command: `npm run build`
-2. Publish directory: `dist`
-3. Set environment variable: `VITE_API_URL=https://your-backend-url.com`
-
----
-
-## Tech Stack Details
-
-**Backend:**
-- **FastAPI**: Modern Python web framework, auto-generated docs
-- **SQLAlchemy 2.0**: ORM with async support
-- **Alembic**: Database migration tool
-- **Pydantic**: Data validation using Python type annotations
-- **python-jose**: JWT token generation and verification
-- **bcrypt**: Password hashing
-
-**Frontend:**
-- **React 18**: Latest React with concurrent features
-- **TypeScript**: Type-safe JavaScript
-- **Vite**: Lightning-fast build tool and dev server
-- **Redux Toolkit**: State management with less boilerplate
-- **React Router**: Client-side routing
-- **TailwindCSS**: Utility-first CSS framework
-- **shadcn/ui**: Beautiful, accessible component library
-- **Lucide React**: Modern icon library
-
----
-
-## License
-
-This template is free to use for any purpose. No attribution required.
-
----
-
-## Next Steps
-
-1. **Customize branding**: Update app name in sidebar, page titles, etc.
-2. **Add your features**: Follow the customization guide above
-3. **Configure permissions**: Add your own permissions in DEFAULT_ROLE_PERMISSIONS
-4. **Set up production database**: Switch to PostgreSQL for production
-5. **Deploy**: Deploy backend and frontend to your preferred hosting
-6. **Secure your app**: Change SECRET_KEY, enable HTTPS, configure CORS properly
-
----
-
-## Support
-
-This is a template/starting point. Feel free to modify, extend, or completely restructure it to fit your needs.
-
-**What's included:**
-- ✅ Authentication & authorization
-- ✅ User management
-- ✅ Role-based permissions
-- ✅ Responsive UI with dark mode
-- ✅ Protected routes
-- ✅ Redux state management
-- ✅ Database migrations
-- ✅ Docker support
-
-**What you need to add:**
-- Your business logic and models
-- Your custom pages and features
-- Your API endpoints
-- Your database schema
-- Production deployment configuration
-
----
-
-Happy building! 🚀
-
+- [Phase 0 foundation](docs/phase_0_foundation.md) documents the MVP scope, initial estimates, context diagram, and PostgreSQL decision. Some examples in that document describe the original database-only scaffold; the Compose commands above reflect the current repo.
+- [Server assessment](docs/phase0_server_review.md) tracks implemented areas and gaps. The last-item concurrency exercise and payment-state migration still need verification on PostgreSQL; SQLite API tests do not prove PostgreSQL row-lock behavior.
+- The P95/error-rate values are **targets**, not measured performance claims. A seeded, repeatable Locust baseline is still needed before comparing architecture changes.
