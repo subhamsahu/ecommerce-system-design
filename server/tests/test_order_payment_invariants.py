@@ -125,3 +125,65 @@ def test_one_successful_payment_and_admin_cancellation_refunds_once():
     assert any(row["status"] == "refunded" for row in payments)
     with Session(engine) as db:
         assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3
+
+
+def test_failed_payment_restores_stock_once_and_cannot_be_retried_as_success():
+    client = TestClient(app)
+    _, customer_headers, product_id, order_id = setup_order(client)
+    url = f"/api/v1/payments/{order_id}/attempt"
+    headers = {**customer_headers, "Idempotency-Key": "payment-failure-key"}
+    first = client.post(url, headers=headers, json={"outcome": "failure"})
+    assert first.status_code == 201, first.text
+    assert first.json()["status"] == "failed"
+    repeat = client.post(url, headers=headers, json={"outcome": "failure"})
+    assert repeat.status_code == 200, repeat.text
+    assert repeat.json()["id"] == first.json()["id"]
+    later_success = client.post(url, headers={**customer_headers, "Idempotency-Key": "payment-new-key"}, json={"outcome": "success"})
+    assert later_success.status_code == 409
+    assert client.get(f"/api/v1/orders/{order_id}", headers=customer_headers).json()["status"] == "payment_failed"
+    with Session(engine) as db:
+        inventory = db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one()
+        assert inventory.quantity == 3
+        movements = db.exec(select(models.InventoryMovement).where(models.InventoryMovement.reference_id == str(order_id))).all()
+        assert [row.quantity_delta for row in movements] == [-1, 1]
+
+
+def test_timeout_holds_stock_until_admin_resolves_failure():
+    client = TestClient(app)
+    admin_headers, customer_headers, product_id, order_id = setup_order(client)
+    url = f"/api/v1/payments/{order_id}/attempt"
+    timed_out = client.post(url, headers={**customer_headers, "Idempotency-Key": "payment-timeout-key"}, json={"outcome": "timeout"})
+    assert timed_out.status_code == 201, timed_out.text
+    assert client.get(f"/api/v1/orders/{order_id}", headers=customer_headers).json()["status"] == "payment_review"
+    assert client.post(url, headers={**customer_headers, "Idempotency-Key": "payment-new-key"}, json={"outcome": "success"}).status_code == 409
+    with Session(engine) as db:
+        assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 2
+
+    resolve_url = f"/api/v1/payments/{order_id}/resolve-timeout"
+    assert client.post(resolve_url, headers=customer_headers, json={"outcome": "failure"}).status_code == 403
+    resolved = client.post(resolve_url, headers=admin_headers, json={"outcome": "failure"})
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "failed"
+    assert client.post(resolve_url, headers=admin_headers, json={"outcome": "failure"}).status_code == 409
+    with Session(engine) as db:
+        assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3
+
+
+def test_timeout_resolution_success_then_repeated_cancellation_restores_once():
+    client = TestClient(app)
+    admin_headers, customer_headers, product_id, order_id = setup_order(client)
+    assert client.post(
+        f"/api/v1/payments/{order_id}/attempt",
+        headers={**customer_headers, "Idempotency-Key": "payment-timeout-key"},
+        json={"outcome": "timeout"},
+    ).status_code == 201
+    resolved = client.post(f"/api/v1/payments/{order_id}/resolve-timeout", headers=admin_headers, json={"outcome": "success"})
+    assert resolved.status_code == 200, resolved.text
+    assert resolved.json()["status"] == "succeeded"
+    assert client.get(f"/api/v1/orders/{order_id}", headers=customer_headers).json()["status"] == "paid"
+    cancel_url = f"/api/v1/orders/{order_id}/cancellation"
+    assert client.post(cancel_url, headers=customer_headers).status_code == 200
+    assert client.post(cancel_url, headers=customer_headers).status_code == 200
+    with Session(engine) as db:
+        assert db.exec(select(models.Inventory).where(models.Inventory.product_id == product_id)).one().quantity == 3
+        assert len(db.exec(select(models.Refund)).all()) == 1

@@ -30,6 +30,32 @@ def fingerprint(body: CheckoutRequest) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def restore_order_inventory(db: Session, order: models.Order, actor_id: int, reason: str) -> None:
+    """Release the stock held by an order inside the caller's transaction.
+
+    The caller must lock the order row and perform at most one state transition
+    out of a stock-holding state. Lock product rows in a stable order too.
+    """
+    for item in sorted(order.items, key=lambda row: row.product_id):
+        inventory = db.exec(
+            select(models.Inventory)
+            .where(models.Inventory.product_id == item.product_id)
+            .with_for_update()
+        ).first()
+        if not inventory:
+            raise HTTPException(status_code=409, detail="Order inventory record is missing")
+        inventory.quantity += item.quantity
+        inventory.updated_at = utc_now()
+        db.add(models.InventoryMovement(
+            product_id=item.product_id,
+            quantity_delta=item.quantity,
+            reason=reason,
+            reference_type="order",
+            reference_id=str(order.id),
+            created_by=actor_id,
+        ))
+
+
 def checkout(db: Session, user: models.User, body: CheckoutRequest, idempotency_key: str) -> tuple[models.Order, bool]:
     request_fingerprint = fingerprint(body)
     existing = (
@@ -140,28 +166,13 @@ def cancel_order(db: Session, order_id: int, actor: models.User) -> models.Order
     )
     if not order or (actor.role != models.UserRole.admin and order.user_id != actor.id):
         raise HTTPException(status_code=404, detail="Order not found")
+    if order.status == models.OrderStatus.cancelled:
+        return order
     if order.status not in {models.OrderStatus.pending_payment, models.OrderStatus.paid, models.OrderStatus.processing}:
         raise HTTPException(status_code=409, detail="Order cannot be cancelled in its current state")
 
     old_status = order.status.value
-    for item in order.items:
-        inventory = (
-            db.exec(select(models.Inventory)
-            .where(models.Inventory.product_id == item.product_id)
-            .with_for_update()).first()
-        )
-        if not inventory:
-            raise HTTPException(status_code=409, detail="Order inventory record is missing")
-        inventory.quantity += item.quantity
-        inventory.updated_at = utc_now()
-        db.add(models.InventoryMovement(
-            product_id=item.product_id,
-            quantity_delta=item.quantity,
-            reason="Order cancellation",
-            reference_type="order",
-            reference_id=str(order.id),
-            created_by=actor.id,
-        ))
+    restore_order_inventory(db, order, actor.id, "Order cancellation")
 
     succeeded_payment = (
         db.exec(select(models.Payment)

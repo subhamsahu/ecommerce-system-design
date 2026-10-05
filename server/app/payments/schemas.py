@@ -15,3 +15,9 @@ class PaymentOutcome(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     outcome: Literal["success", "failure", "timeout"] = "success"
+
+
+class TimeoutResolution(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    outcome: Literal["success", "failure"]

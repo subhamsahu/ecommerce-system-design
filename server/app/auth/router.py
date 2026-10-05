@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app import models
@@ -36,7 +37,12 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)):
         role=models.UserRole.customer,
     )
     db.add(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        # The uniqueness checks above can race with another registration.
+        raise HTTPException(status_code=409, detail="Username or email already registered") from exc
     db.refresh(user)
     return user
 

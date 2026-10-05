@@ -2,10 +2,10 @@ from fastapi import APIRouter, Depends, Header, Response, status
 from sqlmodel import Session, select
 
 from app import models
-from app.auth import get_current_user
+from app.auth import get_current_user, require_admin
 from app.core.database import get_db
-from app.payments.schemas import PaymentOutcome, PaymentResponse
-from app.payments.service import attempt_payment
+from app.payments.schemas import PaymentOutcome, PaymentResponse, TimeoutResolution
+from app.payments.service import attempt_payment, resolve_timeout
 
 router = APIRouter(prefix="/api/v1/payments", tags=["Payments"])
 
@@ -36,6 +36,17 @@ def create_payment_attempt(
     if not created:
         response.status_code = status.HTTP_200_OK
     return payment
+
+
+@router.post("/{order_id}/resolve-timeout", response_model=PaymentResponse)
+def resolve_timed_out_payment(
+    order_id: int,
+    body: TimeoutResolution,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    """Resolve a simulated unknown payment as success or failure (admin only)."""
+    return resolve_timeout(db, order_id, current_user, body.outcome)
 
 
 @router.get("/{order_id}", response_model=list[PaymentResponse])

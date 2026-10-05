@@ -168,6 +168,8 @@ class Address(SQLModel, table=True):
 
 class OrderStatus(str, enum.Enum):
     pending_payment = "pending_payment"
+    payment_failed = "payment_failed"
+    payment_review = "payment_review"
     paid = "paid"
     processing = "processing"
     shipped = "shipped"

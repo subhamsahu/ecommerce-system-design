@@ -7,9 +7,9 @@ log in with distinct ``seed_fake`` accounts. By default, the account pool is
 PERF_USER_PASSWORD when using a different seeded range or password.
 
 Checkout scenarios create real local orders and consume inventory. Run them
-against disposable data, and provision enough stock for approximately:
-
-    users * PERF_CHECKOUTS_PER_USER
+against disposable data. Size stock for the whole timed run, not just the
+number of users: each user may check out repeatedly throughout the test.
+Record the actual order count and remaining stock after each run.
 
 The idempotency scenario creates one order per iteration and immediately
 replays the same request/key to verify the original order is returned.
@@ -108,7 +108,7 @@ class AuthenticatedUserMixin:
 class CatalogReadUser(HttpUser):
     """Measures the public product-list read path (NFR-PERF-001)."""
 
-    wait_time = between(0.5, 1.5)
+    wait_time = between(1, 3)
 
     @task
     def list_products(self) -> None:
@@ -130,10 +130,29 @@ class CatalogReadUser(HttpUser):
                 response.failure("Expected paginated response with items and pagination")
 
 
+class ProductDetailReadUser(HttpUser):
+    """Measures product details separately from the product-list percentile."""
+
+    wait_time = between(1, 3)
+
+    def on_start(self) -> None:
+        self.product_id = _positive_int_env("PERF_PRODUCT_ID")
+
+    @task
+    def get_product(self) -> None:
+        with self.client.get(
+            f"{PRODUCTS_PATH}/{self.product_id}",
+            name="GET /api/v1/products/:id",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Expected 200, got {response.status_code}")
+
+
 class ProfileWriteUser(AuthenticatedUserMixin, HttpUser):
     """Measures an authenticated profile update (NFR-PERF-002)."""
 
-    wait_time = between(0.5, 1.5)
+    wait_time = between(1, 3)
 
     def on_start(self) -> None:
         super().on_start()
@@ -207,19 +226,16 @@ class ProductPageSizeUser(HttpUser):
 
 
 class CheckoutUser(AuthenticatedUserMixin, HttpUser):
-    """Measures checkout creation (NFR-PERF-003); consumes one unit per order."""
+    """Exercises checkout plus successful payment; report both API latencies."""
 
-    wait_time = between(0.5, 1.5)
+    wait_time = between(1, 3)
 
     def on_start(self) -> None:
         super().on_start()
         self.product_id = _positive_int_env("PERF_PRODUCT_ID")
-        self.checkouts_completed = 0
-        self.max_checkouts = _positive_int_env("PERF_CHECKOUTS_PER_USER", default=10)
 
     @task
     def create_order(self) -> None:
-        self.checkouts_completed += 1
         with self.client.post(
             CART_ITEMS_PATH,
             json={"product_id": self.product_id, "quantity": 1},
@@ -228,7 +244,6 @@ class CheckoutUser(AuthenticatedUserMixin, HttpUser):
         ) as cart_response:
             if cart_response.status_code != 200:
                 cart_response.failure(f"Could not prepare cart: HTTP {cart_response.status_code}")
-                self._stop_at_limit()
                 return
 
         with self.client.post(
@@ -240,27 +255,43 @@ class CheckoutUser(AuthenticatedUserMixin, HttpUser):
         ) as response:
             if response.status_code != 201:
                 response.failure(f"Expected a newly created order (201), got {response.status_code}")
-        self._stop_at_limit()
+                return
+            try:
+                order_id = response.json()["id"]
+            except (ValueError, KeyError, TypeError):
+                response.failure("Checkout response did not contain an order ID")
+                return
 
-    def _stop_at_limit(self) -> None:
-        if self.checkouts_completed >= self.max_checkouts:
-            raise StopUser
+        with self.client.post(
+            f"/api/v1/payments/{order_id}/attempt",
+            json={"outcome": "success"},
+            headers={"Idempotency-Key": f"locust-payment-{uuid.uuid4().hex}"},
+            name="POST /api/v1/payments/:order_id/attempt (success)",
+            catch_response=True,
+        ) as payment_response:
+            if payment_response.status_code != 201:
+                payment_response.failure(f"Payment failed: HTTP {payment_response.status_code}")
+                return
+            try:
+                payment_status = payment_response.json()["status"]
+            except (ValueError, KeyError, TypeError):
+                payment_response.failure("Payment response did not contain a status")
+                return
+            if payment_status != "succeeded":
+                payment_response.failure("Payment response was not succeeded")
 
 
 class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
     """Creates an order, then replays the identical key/body and checks its ID."""
 
-    wait_time = between(1, 2)
+    wait_time = between(1, 3)
 
     def on_start(self) -> None:
         super().on_start()
         self.product_id = _positive_int_env("PERF_PRODUCT_ID")
-        self.iterations = 0
-        self.max_iterations = _positive_int_env("PERF_CHECKOUTS_PER_USER", default=10)
 
     @task
     def create_then_replay(self) -> None:
-        self.iterations += 1
         with self.client.post(
             CART_ITEMS_PATH,
             json={"product_id": self.product_id, "quantity": 1},
@@ -269,7 +300,6 @@ class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
         ) as cart_response:
             if cart_response.status_code != 200:
                 cart_response.failure(f"Could not prepare cart: HTTP {cart_response.status_code}")
-                self._stop_at_limit()
                 return
 
         key = f"locust-idem-{uuid.uuid4().hex}"
@@ -283,13 +313,11 @@ class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
         ) as first:
             if first.status_code != 201:
                 first.failure(f"Expected first request to create an order (201), got {first.status_code}")
-                self._stop_at_limit()
                 return
             try:
                 first_order_id = first.json()["id"]
             except (ValueError, KeyError, TypeError):
                 first.failure("First checkout response did not contain an order ID")
-                self._stop_at_limit()
                 return
 
         with self.client.post(
@@ -301,26 +329,16 @@ class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
         ) as replay:
             if replay.status_code != 200:
                 replay.failure(f"Expected replay to return the existing order (200), got {replay.status_code}")
-                self._stop_at_limit()
                 return
             try:
                 replay_order_id = replay.json()["id"]
             except (ValueError, KeyError, TypeError):
                 replay.failure("Replay response did not contain an order ID")
-                self._stop_at_limit()
                 return
             if replay_order_id != first_order_id:
                 replay.failure("Idempotency replay returned a different order ID")
 
-        self._stop_at_limit()
-
-    def _stop_at_limit(self) -> None:
-        if self.iterations >= self.max_iterations:
-            raise StopUser
-
-
-# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CatalogReadUser
-# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s ProfileWriteUser
-# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s ProductPageSizeUser
-# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CheckoutUser
-# locust -f locustfile.py --headless -H http://localhost:8000 -u 1 -r 1 -t 30s CheckoutIdempotencyUser
+# From the repository root, use -f load-tests/locustfile.py. Set PERF_PRODUCT_ID
+# to a published product with sufficient inventory for detail and checkout runs.
+# locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 100 -r 10 -t 10m CatalogReadUser
+# locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 20 -r 2 -t 10m CheckoutUser
