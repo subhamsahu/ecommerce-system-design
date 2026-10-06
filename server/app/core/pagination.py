@@ -1,0 +1,20 @@
+from math import ceil
+
+from sqlalchemy import func
+from sqlmodel import Session, select
+
+from app.core.schemas import Page, Pagination
+
+
+def paginate(db: Session, statement, page: int, page_size: int, schema):
+    total = db.exec(select(func.count()).select_from(statement.order_by(None).subquery())).one()
+    rows = db.exec(statement.offset((page - 1) * page_size).limit(page_size)).all()
+    return Page(
+        items=[schema.model_validate(row) for row in rows],
+        pagination=Pagination(
+            page=page,
+            page_size=page_size,
+            total_items=total,
+            total_pages=ceil(total / page_size) if total else 0,
+        ),
+    )

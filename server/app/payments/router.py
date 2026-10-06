@@ -1,0 +1,68 @@
+from fastapi import APIRouter, Depends, Header, Response, status
+from sqlmodel import Session, select
+
+from app import models
+from app.auth import get_current_user, require_admin
+from app.core.database import get_db
+from app.payments.schemas import PaymentOutcome, PaymentResponse, TimeoutResolution
+from app.payments.service import attempt_payment, resolve_timeout
+
+router = APIRouter(prefix="/api/v1/payments", tags=["Payments"])
+
+
+@router.post("/{order_id}/attempt", response_model=PaymentResponse, status_code=status.HTTP_201_CREATED)
+def create_payment_attempt(
+    order_id: int,
+    body: PaymentOutcome,
+    response: Response,
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=128),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    """Simulate a payment attempt for an order.
+
+    Args:
+        order_id: ID of the order to pay for.
+        body: Simulated outcome (success, failure, or timeout).
+        idempotency_key: Required ``Idempotency-Key`` header, 8-128 characters; reuse safely retries the same outcome.
+
+    Returns:
+        The payment attempt (201), or the existing attempt (200) for an identical idempotent retry.
+
+    Raises:
+        HTTPException: 401 if unauthenticated, 404 if the order does not exist or is not owned by the user, 409 if the key conflicts or the order is not awaiting payment, or 422 for invalid input.
+    """
+    payment, created = attempt_payment(db, order_id, current_user, body.outcome, idempotency_key)
+    if not created:
+        response.status_code = status.HTTP_200_OK
+    return payment
+
+
+@router.post("/{order_id}/resolve-timeout", response_model=PaymentResponse)
+def resolve_timed_out_payment(
+    order_id: int,
+    body: TimeoutResolution,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_admin),
+):
+    """Resolve a simulated unknown payment as success or failure (admin only)."""
+    return resolve_timeout(db, order_id, current_user, body.outcome)
+
+
+@router.get("/{order_id}", response_model=list[PaymentResponse])
+def list_payments(order_id: int, db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    """List payment attempts for an order visible to the authenticated user.
+
+    Args:
+        order_id: ID of the order whose payment attempts are requested.
+
+    Returns:
+        Payment attempts ordered from oldest to newest; an empty list if none are found.
+
+    Raises:
+        HTTPException: 401 if unauthenticated or 422 if the order ID is invalid.
+    """
+    query = select(models.Payment).join(models.Order).where(models.Payment.order_id == order_id)
+    if current_user.role != models.UserRole.admin:
+        query = query.where(models.Order.user_id == current_user.id)
+    return db.exec(query.order_by(models.Payment.created_at)).all()

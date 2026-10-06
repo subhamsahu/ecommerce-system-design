@@ -1,0 +1,68 @@
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
+
+from app import models
+from app.auth.dependencies import create_access_token, hash_password, verify_password
+from app.auth.schemas import LoginRequest, Token, UserCreate, UserResponse
+from app.core.database import get_db
+
+router = APIRouter(prefix="/api/v1/auth", tags=["Authentication"])
+
+
+@router.post("/register", response_model=UserResponse, status_code=201)
+def register(user_in: UserCreate, db: Session = Depends(get_db)):
+    """Register a customer account.
+
+    Args:
+        user_in: Username, email, name, and password for the new account.
+
+    Returns:
+        The created user profile.
+
+    Raises:
+        HTTPException: 409 if the username or email is already registered; 422 for invalid input.
+    """
+    username = user_in.username.strip().lower()
+    email = user_in.email.strip().lower()
+    if db.exec(select(models.User).where(models.User.username == username)).first():
+        raise HTTPException(status_code=409, detail="Username already registered")
+    if db.exec(select(models.User).where(models.User.email == email)).first():
+        raise HTTPException(status_code=409, detail="Email already registered")
+    user = models.User(
+        username=username,
+        email=email,
+        full_name=user_in.full_name,
+        hashed_password=hash_password(user_in.password),
+        role=models.UserRole.customer,
+    )
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        # The uniqueness checks above can race with another registration.
+        raise HTTPException(status_code=409, detail="Username or email already registered") from exc
+    db.refresh(user)
+    return user
+
+
+@router.post("/login", response_model=Token)
+def login(login_data: LoginRequest, db: Session = Depends(get_db)):
+    """Authenticate a user and issue a bearer access token.
+
+    Args:
+        login_data: Username and password credentials.
+
+    Returns:
+        An access token, token type, and user profile.
+
+    Raises:
+        HTTPException: 401 if the credentials are incorrect or the account is inactive; 422 for invalid input.
+    """
+    username = login_data.username.strip().lower()
+    user = db.exec(select(models.User).where(models.User.username == username)).first()
+    if not user or not user.is_active or not verify_password(login_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect username or password")
+    token = create_access_token({"sub": user.username, "role": user.role.value})
+    return {"access_token": token, "token_type": "bearer", "user": user}

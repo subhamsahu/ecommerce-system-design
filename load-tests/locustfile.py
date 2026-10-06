@@ -1,0 +1,344 @@
+"""Locust scenarios for the ecommerce-system-design API.
+
+Run one scenario at a time from the repository root. Authenticated scenarios
+log in with distinct ``seed_fake`` accounts. By default, the account pool is
+``seed_user_000001`` through ``seed_user_001000`` with password
+``TestPassword123!``. Configure PERF_USER_COUNT, PERF_USER_START_INDEX, or
+PERF_USER_PASSWORD when using a different seeded range or password.
+
+Checkout scenarios create real local orders and consume inventory. Run them
+against disposable data. Size stock for the whole timed run, not just the
+number of users: each user may check out repeatedly throughout the test.
+Record the actual order count and remaining stock after each run.
+
+The idempotency scenario creates one order per iteration and immediately
+replays the same request/key to verify the original order is returned.
+"""
+
+from __future__ import annotations
+
+import os
+import uuid
+from queue import Empty, Queue
+
+from locust import HttpUser, between, task
+from locust.exception import StopUser
+
+
+PRODUCTS_PATH = "/api/v1/products"
+LOGIN_PATH = "/api/v1/auth/login"
+PROFILE_PATH = "/api/v1/users/me"
+CART_ITEMS_PATH = "/api/v1/cart/items"
+ORDERS_PATH = "/api/v1/orders"
+MAX_PRODUCT_PAGE_SIZE = 200
+
+CHECKOUT_BODY = {
+    "address": {
+        "line1": "Locust performance test address",
+        "city": "Test City",
+        "state": "Test State",
+        "postal_code": "00000",
+    }
+}
+
+
+def _positive_int_env(name: str, default: int | None = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        if default is None:
+            raise RuntimeError(f"Set {name} before running this scenario")
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise RuntimeError(f"{name} must be a positive integer") from exc
+    if value < 1:
+        raise RuntimeError(f"{name} must be a positive integer")
+    return value
+
+
+_USER_PASSWORD = os.getenv("PERF_USER_PASSWORD", "TestPassword123!")
+_USER_START_INDEX = _positive_int_env("PERF_USER_START_INDEX", default=1)
+_USER_COUNT = _positive_int_env("PERF_USER_COUNT", default=1000)
+_USER_POOL: Queue[str] = Queue()
+for _user_index in range(_USER_START_INDEX, _USER_START_INDEX + _USER_COUNT):
+    _USER_POOL.put(f"seed_user_{_user_index:06d}")
+
+
+class AuthenticatedUserMixin:
+    """Log in with a distinct seeded account for each active user in one process."""
+
+    username: str | None = None
+
+    def on_start(self) -> None:
+        try:
+            username = _USER_POOL.get_nowait()
+        except Empty:
+            raise StopUser from None
+        self.username = username
+        with self.client.post(
+            LOGIN_PATH,
+            json={"username": username, "password": _USER_PASSWORD},
+            name="POST /api/v1/auth/login",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Login failed: expected 200, got {response.status_code}")
+                self.username = None
+                raise StopUser
+            try:
+                token = response.json()["access_token"]
+            except (ValueError, KeyError, TypeError):
+                response.failure("Login response did not contain access_token")
+                self.username = None
+                raise StopUser
+            if not isinstance(token, str) or not token:
+                response.failure("Login response did not contain a valid access_token")
+                self.username = None
+                raise StopUser
+        self.client.headers["Authorization"] = f"Bearer {token}"
+
+    def on_stop(self) -> None:
+        if self.username:
+            self.client.headers.pop("Authorization", None)
+            _USER_POOL.put(self.username)
+            self.username = None
+
+
+class CatalogReadUser(HttpUser):
+    """Measures the public product-list read path (NFR-PERF-001)."""
+
+    wait_time = between(1, 3)
+
+    @task
+    def list_products(self) -> None:
+        with self.client.get(
+            PRODUCTS_PATH,
+            params={"page": 1, "page_size": 20},
+            name="GET /api/v1/products (page_size=20)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Expected 200, got {response.status_code}")
+                return
+            try:
+                body = response.json()
+            except ValueError:
+                response.failure("Response body was not valid JSON")
+                return
+            if not isinstance(body.get("items"), list) or not isinstance(body.get("pagination"), dict):
+                response.failure("Expected paginated response with items and pagination")
+
+
+class ProductDetailReadUser(HttpUser):
+    """Measures product details separately from the product-list percentile."""
+
+    wait_time = between(1, 3)
+
+    def on_start(self) -> None:
+        self.product_id = _positive_int_env("PERF_PRODUCT_ID")
+
+    @task
+    def get_product(self) -> None:
+        with self.client.get(
+            f"{PRODUCTS_PATH}/{self.product_id}",
+            name="GET /api/v1/products/:id",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Expected 200, got {response.status_code}")
+
+
+class ProfileWriteUser(AuthenticatedUserMixin, HttpUser):
+    """Measures an authenticated profile update (NFR-PERF-002)."""
+
+    wait_time = between(1, 3)
+
+    def on_start(self) -> None:
+        super().on_start()
+        with self.client.get(PROFILE_PATH, name="GET /api/v1/users/me (setup)", catch_response=True) as response:
+            if response.status_code != 200:
+                response.failure(f"Could not load test profile: HTTP {response.status_code}")
+                raise StopUser
+            try:
+                self.full_name = response.json()["full_name"]
+            except (ValueError, KeyError, TypeError):
+                response.failure("Profile response did not contain full_name")
+                raise StopUser
+
+    @task
+    def update_profile(self) -> None:
+        with self.client.patch(
+            PROFILE_PATH,
+            json={"full_name": self.full_name},
+            name="PATCH /api/v1/users/me",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Expected 200, got {response.status_code}")
+
+
+class ProductPageSizeUser(HttpUser):
+    """Checks the public product-list maximum and rejection above it."""
+
+    wait_time = between(1, 2)
+
+    @task
+    def check_maximum_page_size(self) -> None:
+        with self.client.get(
+            PRODUCTS_PATH,
+            params={"page": 1, "page_size": MAX_PRODUCT_PAGE_SIZE},
+            name="GET /api/v1/products (page_size=200)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 200:
+                response.failure(f"Expected 200, got {response.status_code}")
+                return
+            try:
+                items = response.json().get("items")
+            except (ValueError, AttributeError):
+                response.failure("Response did not contain valid JSON")
+                return
+            if not isinstance(items, list) or len(items) > MAX_PRODUCT_PAGE_SIZE:
+                response.failure(f"Expected at most {MAX_PRODUCT_PAGE_SIZE} items")
+
+        with self.client.get(
+            PRODUCTS_PATH,
+            params={"page": 1, "page_size": MAX_PRODUCT_PAGE_SIZE + 1},
+            name="GET /api/v1/products (page_size=201, expected 422)",
+            catch_response=True,
+        ) as response:
+            # This API declares page_size <= 200, so 422 is the expected result.
+            if response.status_code == 422:
+                response.success()
+            elif response.status_code == 200:
+                try:
+                    count = len(response.json().get("items", []))
+                except (ValueError, AttributeError):
+                    response.failure("Over-limit response did not contain valid JSON")
+                    return
+                if count <= MAX_PRODUCT_PAGE_SIZE:
+                    response.success()
+                else:
+                    response.failure(f"API returned {count} items; maximum is {MAX_PRODUCT_PAGE_SIZE}")
+            else:
+                response.failure(f"Expected 422 or a capped 200 response, got {response.status_code}")
+
+
+class CheckoutUser(AuthenticatedUserMixin, HttpUser):
+    """Exercises checkout plus successful payment; report both API latencies."""
+
+    wait_time = between(1, 3)
+
+    def on_start(self) -> None:
+        super().on_start()
+        self.product_id = _positive_int_env("PERF_PRODUCT_ID")
+
+    @task
+    def create_order(self) -> None:
+        with self.client.post(
+            CART_ITEMS_PATH,
+            json={"product_id": self.product_id, "quantity": 1},
+            name="POST /api/v1/cart/items (checkout setup)",
+            catch_response=True,
+        ) as cart_response:
+            if cart_response.status_code != 200:
+                cart_response.failure(f"Could not prepare cart: HTTP {cart_response.status_code}")
+                return
+
+        with self.client.post(
+            ORDERS_PATH,
+            json=CHECKOUT_BODY,
+            headers={"Idempotency-Key": f"locust-{uuid.uuid4().hex}"},
+            name="POST /api/v1/orders (checkout)",
+            catch_response=True,
+        ) as response:
+            if response.status_code != 201:
+                response.failure(f"Expected a newly created order (201), got {response.status_code}")
+                return
+            try:
+                order_id = response.json()["id"]
+            except (ValueError, KeyError, TypeError):
+                response.failure("Checkout response did not contain an order ID")
+                return
+
+        with self.client.post(
+            f"/api/v1/payments/{order_id}/attempt",
+            json={"outcome": "success"},
+            headers={"Idempotency-Key": f"locust-payment-{uuid.uuid4().hex}"},
+            name="POST /api/v1/payments/:order_id/attempt (success)",
+            catch_response=True,
+        ) as payment_response:
+            if payment_response.status_code != 201:
+                payment_response.failure(f"Payment failed: HTTP {payment_response.status_code}")
+                return
+            try:
+                payment_status = payment_response.json()["status"]
+            except (ValueError, KeyError, TypeError):
+                payment_response.failure("Payment response did not contain a status")
+                return
+            if payment_status != "succeeded":
+                payment_response.failure("Payment response was not succeeded")
+
+
+class CheckoutIdempotencyUser(AuthenticatedUserMixin, HttpUser):
+    """Creates an order, then replays the identical key/body and checks its ID."""
+
+    wait_time = between(1, 3)
+
+    def on_start(self) -> None:
+        super().on_start()
+        self.product_id = _positive_int_env("PERF_PRODUCT_ID")
+
+    @task
+    def create_then_replay(self) -> None:
+        with self.client.post(
+            CART_ITEMS_PATH,
+            json={"product_id": self.product_id, "quantity": 1},
+            name="POST /api/v1/cart/items (idempotency setup)",
+            catch_response=True,
+        ) as cart_response:
+            if cart_response.status_code != 200:
+                cart_response.failure(f"Could not prepare cart: HTTP {cart_response.status_code}")
+                return
+
+        key = f"locust-idem-{uuid.uuid4().hex}"
+        headers = {"Idempotency-Key": key}
+        with self.client.post(
+            ORDERS_PATH,
+            json=CHECKOUT_BODY,
+            headers=headers,
+            name="POST /api/v1/orders (first idempotent checkout)",
+            catch_response=True,
+        ) as first:
+            if first.status_code != 201:
+                first.failure(f"Expected first request to create an order (201), got {first.status_code}")
+                return
+            try:
+                first_order_id = first.json()["id"]
+            except (ValueError, KeyError, TypeError):
+                first.failure("First checkout response did not contain an order ID")
+                return
+
+        with self.client.post(
+            ORDERS_PATH,
+            json=CHECKOUT_BODY,
+            headers=headers,
+            name="POST /api/v1/orders (idempotency replay)",
+            catch_response=True,
+        ) as replay:
+            if replay.status_code != 200:
+                replay.failure(f"Expected replay to return the existing order (200), got {replay.status_code}")
+                return
+            try:
+                replay_order_id = replay.json()["id"]
+            except (ValueError, KeyError, TypeError):
+                replay.failure("Replay response did not contain an order ID")
+                return
+            if replay_order_id != first_order_id:
+                replay.failure("Idempotency replay returned a different order ID")
+
+# From the repository root, use -f load-tests/locustfile.py. Set PERF_PRODUCT_ID
+# to a published product with sufficient inventory for detail and checkout runs.
+# locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 100 -r 10 -t 10m CatalogReadUser
+# locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 20 -r 2 -t 10m CheckoutUser
