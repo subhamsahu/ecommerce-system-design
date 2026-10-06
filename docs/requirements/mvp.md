@@ -390,6 +390,7 @@ The local MVP has no production SLA. Use the following **hypothetical small-prod
 | Acknowledged transaction durability | A successful write is acknowledged only after its database transaction commits | Verify commit/error handling; separately test backups and recovery rather than assuming a local disk cannot fail |
 
 ---
+
 ## 9. Scale and Capacity Assumptions
 
 Use three separate levels so the architecture is not prematurely designed for fictional traffic.

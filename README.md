@@ -112,7 +112,7 @@ For Locust, run from the repository root with Locust installed on the load-gener
 locust -f load-tests/locustfile.py --headless -H http://localhost:8000 -u 100 -r 10 -t 10m CatalogReadUser
 ```
 
-`ProductDetailReadUser` and `CheckoutUser` require `PERF_PRODUCT_ID` to point to a published product. `CheckoutUser` creates orders and completes simulated payments against real local inventory. It reports order and payment HTTP latencies separately. Record the dataset, application worker count, machine resources, warm-up, throughput, P50/P95/P99, and unexpected errors for every benchmark. See [the server assessment](docs/phase0_server_review.md) for the known limits of these scenarios.
+`ProductDetailReadUser` and `CheckoutUser` require `PERF_PRODUCT_ID` to point to a published product. `CheckoutUser` creates orders and completes simulated payments against real local inventory. It reports order and payment HTTP latencies separately. Record the dataset, application worker count, machine resources, warm-up, throughput, P50/P95/P99, and unexpected errors for every benchmark.
 
 ## Project status and next work
 
